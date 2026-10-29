@@ -1,0 +1,13 @@
+{
+  "name": "sceleton-dev",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build-dev.mjs",
+    "test": "bash test.sh",
+    "icons": "node render-icons.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
+}

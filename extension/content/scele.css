@@ -1,0 +1,52 @@
+/* Dark mode for SCeLE: flip every colour, then flip pictures back so they look normal. */
+html.sceleton-dark {
+  filter: invert(1) hue-rotate(180deg);
+  background: #fff !important;
+}
+html.sceleton-dark img,
+html.sceleton-dark video,
+html.sceleton-dark picture,
+html.sceleton-dark canvas,
+html.sceleton-dark iframe,
+html.sceleton-dark object,
+html.sceleton-dark embed,
+html.sceleton-dark [style*="background-image"],
+html.sceleton-dark #sceleton-chip {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+@font-face {
+  font-family: 'Sceleton Grotesk';
+  src: url('chrome-extension://__MSG_@@extension_id__/fonts/familjen-grotesk-latin-wght-normal.woff2') format('woff2');
+  font-weight: 400 700;
+}
+
+/* Countdown on assignment and quiz pages */
+#sceleton-chip {
+  position: fixed; right: 20px; bottom: 20px; z-index: 2147483000;
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 10px 12px 16px;
+  border-radius: 14px;
+  background: #182033; color: #F1F3F7;
+  font: 600 14px/1.25 'Sceleton Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 14px 40px -10px rgba(18, 26, 48, .45), 0 2px 6px rgba(18, 26, 48, .15);
+  --sk: #7EA4D6;
+}
+#sceleton-chip[data-heat="warm"] { --sk: #E8A530; }
+#sceleton-chip[data-heat="hot"] { --sk: #F0603F; }
+#sceleton-chip[data-heat="overdue"] { --sk: #FF7A66; }
+#sceleton-chip .sk-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--sk); box-shadow: 0 0 0 4px color-mix(in srgb, var(--sk) 25%, transparent); }
+#sceleton-chip .sk-text { display: flex; flex-direction: column; }
+#sceleton-chip b { font-size: 17px; font-weight: 700; color: var(--sk); }
+#sceleton-chip[data-heat="cool"] b { color: #F1F3F7; }
+#sceleton-chip small { font-size: 12px; font-weight: 500; color: #A0A8BA; }
+#sceleton-chip button {
+  all: unset; cursor: pointer;
+  width: 26px; height: 26px; border-radius: 8px;
+  display: grid; place-items: center;
+  font-size: 18px; color: #A0A8BA;
+}
+#sceleton-chip button:hover { background: rgba(255, 255, 255, .1); color: #fff; }
+#sceleton-chip button:focus-visible { outline: 2px solid #7D97F2; }
+@media print { #sceleton-chip { display: none; } }
