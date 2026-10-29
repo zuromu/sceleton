@@ -1,0 +1,23 @@
+name: Release
+
+# Push a tag like v0.2.0 to publish a release with the extension zipped up.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zip the extension
+        run: |
+          mkdir -p dist
+          cd extension && zip -r ../dist/sceleton-extension.zip . -x '*.DS_Store'
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/sceleton-extension.zip
+          generate_release_notes: true
