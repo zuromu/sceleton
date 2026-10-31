@@ -25,6 +25,7 @@ export const DEFAULT_SETTINGS = {
   downloadFolder: 'SCeLE',     // inside your Downloads folder
   hiddenCourses: [],           // courses you're enrolled in but not really taking
   coursesChosen: false,        // has the "pick your courses" tip been dealt with?
+  exportDetails: true,         // "Export for Claude" also reads assignment descriptions and pages
 };
 
 export async function get(key, fallback) {

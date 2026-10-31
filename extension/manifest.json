@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Sceleton",
   "short_name": "Sceleton",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A better way to use SCeLE: deadlines on your toolbar, reminders, new material alerts, one-click downloads and search.",
   "icons": {
     "16": "icons/16.png",
@@ -22,7 +22,7 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["storage", "alarms", "notifications", "downloads", "offscreen"],
+  "permissions": ["storage", "alarms", "notifications", "downloads", "offscreen", "clipboardWrite"],
   "host_permissions": ["https://scele.cs.ui.ac.id/*"],
   "content_scripts": [
     {

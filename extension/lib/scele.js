@@ -10,7 +10,7 @@
 // in pages (popup, dashboard), not in the background worker.
 
 import { SCELE_URL } from './config.js';
-import { decode, cmidFromUrl } from './util.js';
+import { decode, cmidFromUrl, htmlToText } from './util.js';
 
 export class NotLoggedIn extends Error {
   constructor() { super('Not logged in to SCeLE'); this.name = 'NotLoggedIn'; }
@@ -247,6 +247,44 @@ export async function markNotificationRead(id) {
 export async function markAllNotificationsRead() {
   const s = await getSession();
   return call('core_message_mark_all_notifications_as_read', { useridto: s.userid || 0 });
+}
+
+// ------------------------------------------------------------ announcements and activity text
+
+// The course's "Announcements" forum, newest first. Only works when the site
+// lets the forum API through; otherwise this throws Unavailable.
+export async function getAnnouncements(courseId, limit = 15) {
+  const forums = await call('mod_forum_get_forums_by_courses', { courseids: [courseId] });
+  const news = (forums || []).find((f) => f.type === 'news');
+  if (!news) return [];
+  const res = await call('mod_forum_get_forum_discussions', { forumid: news.id, sortorder: -1, page: 0, perpage: limit });
+  return ((res && res.discussions) || []).map((d) => {
+    const id = d.discussion || d.id;
+    return {
+      id,
+      title: decode(d.subject || d.name || ''),
+      author: decode(d.userfullname || ''),
+      time: d.timemodified || d.created || 0,
+      text: htmlToText(d.message || ''),
+      url: `${SCELE_URL}/mod/forum/discuss.php?d=${id}`,
+    };
+  });
+}
+
+// The written description on an assignment page ('assign') or the body of a
+// "Page" activity ('page'). Needs DOMParser, so it runs in the dashboard.
+export async function getActivityText(url, kind = 'assign') {
+  const doc = new DOMParser().parseFromString(await get(String(url).replace(SCELE_URL, '')), 'text/html');
+  doc.querySelectorAll('script, style, .accesshide, .sr-only, .visually-hidden').forEach((n) => n.remove());
+  const where = kind === 'page'
+    ? ['.box.generalbox .no-overflow', '.generalbox', '[role="main"]']
+    : ['#intro', '[data-region="activity-description"]', '.activity-description'];
+  for (const sel of where) {
+    const el = doc.querySelector(sel);
+    const text = el ? htmlToText(el.innerHTML) : '';
+    if (text) return text;
+  }
+  return '';
 }
 
 // ------------------------------------------------------------ grades

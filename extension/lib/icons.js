@@ -29,6 +29,9 @@ const P = {
   arrowLeft: '<path d="M19 12H5m0 0 6-6m-6 6 6 6"/>',
   chevron: '<path d="m9 6 6 6-6 6"/>',
   logout: '<path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14M10 16l-4-4 4-4M6 12h10"/>',
+  export: '<path d="M12 15V4m0 0L8 8m4-4 4 4M5 13v5.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V13"/>',
+  copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="1.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>',
+  archive: '<path d="M4 6.5h16V10H4zM5.5 10v8.5A1.5 1.5 0 0 0 7 20h10a1.5 1.5 0 0 0 1.5-1.5V10M10 13.5h4"/>',
 };
 
 const MOD_ICON = { assign: 'assign', quiz: 'quiz', forum: 'forum', resource: 'resource', folder: 'folder', url: 'url', page: 'page', book: 'page', attendance: 'attendance', workshop: 'assign', lesson: 'page' };

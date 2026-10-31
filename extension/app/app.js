@@ -9,6 +9,8 @@
 import * as store from '../lib/store.js';
 import * as data from '../lib/data.js';
 import * as scele from '../lib/scele.js';
+import * as exp from '../lib/export.js';
+import { courseFiles } from '../lib/export.js';
 import { icon, logo } from '../lib/icons.js';
 import { summary, spine, eventRow, groupedList, hue } from '../lib/views.js';
 import {
@@ -244,7 +246,7 @@ function coursesPage() {
   const others = courses().filter((c) => isHidden(c.id));
   return `<div class="page">
     ${errorBanner()}
-    <div class="title-row"><h1 class="headline">Courses</h1>${courses().length ? `<button class="btn" data-act="pick-courses">${icon('settings', 16)}Choose courses</button>` : ''}</div>
+    <div class="title-row"><h1 class="headline">Courses</h1>${list.length ? `<button class="btn" data-act="export-semester">${icon('export', 16)}Export semester</button>` : ''}${courses().length ? `<button class="btn" data-act="pick-courses">${icon('settings', 16)}Choose courses</button>` : ''}</div>
     ${list.length ? `<div class="course-grid">${list.map(courseCard).join('')}</div>`
       : `<div class="panel">${emptyNote(courses().length ? "You aren't tracking any courses." : 'No courses found.', courses().length ? ' Use Choose courses to pick the ones you are taking.' : ' Courses you are enrolled in this semester show up here.')}</div>`}
     ${others.length ? `<section class="section" style="margin-top:36px">
@@ -269,22 +271,6 @@ function courseCard(c) {
       ${next ? `<span class="countdown heat-${heat(next.time)}">${esc(relShort(next.time))}</span><span>${esc(next.name)}</span>` : '<span class="faint">No upcoming deadlines</span>'}
     </div>
   </a>`;
-}
-
-// Every downloadable file in a course, with the folder it should be saved in.
-function courseFiles(course, sections, onlySection = null) {
-  const out = [];
-  sections.forEach((sec, si) => {
-    if (onlySection !== null && si !== onlySection) return;
-    for (const m of sec.modules) {
-      m.files.forEach((f, fi) => {
-        const folder = [course.shortname, sec.name];
-        if (m.modname === 'folder') folder.push(m.name, ...f.path.split('/').filter(Boolean));
-        out.push({ url: f.url, name: f.name, folder, key: `${f.url}|${f.time}`, mod: m.id, idx: fi });
-      });
-    }
-  });
-  return out;
 }
 
 function coursePage(id) {
@@ -326,6 +312,7 @@ function coursePage(id) {
       <div class="name">${esc(c.shortname)}${content ? `<span class="faint">, updated ${esc(rel(content.at))}</span>` : ''}</div>
       <div class="actions">
         ${files.length ? `<button class="btn primary" data-act="dl-course" data-id="${id}">${icon('download', 16)}${fresh2dl ? `Download ${fresh2dl === files.length ? 'all' : 'new'} files (${fresh2dl})` : 'Download all again'}</button>` : ''}
+        <button class="btn" data-act="export" data-id="${id}" ${content ? '' : 'disabled'}>${icon('export', 16)}Export for Claude</button>
         <a class="btn" href="${esc(c.url)}" target="_blank" rel="noopener">${icon('external', 16)}Open in SCeLE</a>
         <button class="btn ghost${loading ? ' spinning' : ''}" data-act="reload-course" data-id="${id}">${icon('refresh', 16)}Refresh</button>
       </div>
@@ -621,6 +608,11 @@ function searchIndex() {
   items.push({ kind: 'Action', title: 'Sync with SCeLE now', icon: 'refresh', run: () => syncNow(true) });
   items.push({ kind: 'Action', title: 'Choose which courses to track', icon: 'courses', run: openCoursePicker });
   items.push({ kind: 'Action', title: 'Add deadlines to calendar', sub: 'Downloads an .ics file', icon: 'calendar', run: exportIcs });
+  items.push({ kind: 'Action', title: 'Export my semester for Claude', sub: 'What is due and your grades, as text', icon: 'export', run: () => openExport(null) });
+  const here = route();
+  if (here.page === 'courses' && here.id && courseById(here.id) && db.contents?.[here.id]) {
+    items.push({ kind: 'Action', title: `Export ${courseById(here.id).shortname} for Claude`, sub: 'Deadlines, grades, announcements and files', icon: 'export', boost: 6, run: () => openExport(here.id) });
+  }
   items.push({ kind: 'Action', title: store.isDark(settings) ? 'Switch Sceleton to light mode' : 'Switch Sceleton to dark mode', icon: store.isDark(settings) ? 'sun' : 'moon', run: () => store.toggleTheme(settings) });
   items.push({ kind: 'Action', title: settings.darkScele ? 'Turn off dark mode for SCeLE' : 'Turn on dark mode for SCeLE', icon: 'moon', run: () => store.saveSettings({ darkScele: !settings.darkScele }) });
   for (const c of courses()) {
@@ -737,6 +729,159 @@ function openCoursePicker() {
   overlay.querySelector('[data-pick-done]').focus();
 }
 
+// ------------------------------------------------------------ export for Claude
+
+// Saves a file we built ourselves into Downloads/SCeLE/<course>/.
+async function saveBlob(blob, name, folder) {
+  const url = URL.createObjectURL(blob);
+  const filename = [safeName(settings.downloadFolder || 'SCeLE'), folder && safeName(folder), name].filter(Boolean).join('/');
+  const downloadId = await chrome.downloads.download({ url, filename, conflictAction: 'uniquify' });
+  setTimeout(() => URL.revokeObjectURL(url), 5 * 60 * 1000);
+  return { path: filename, downloadId };
+}
+
+// One course (courseId) or the whole semester (null), as text or as a zip.
+function openExport(courseId = null) {
+  const c = courseId ? courseById(courseId) : null;
+  if (courseId && !c) return;
+  const overlay = $('#overlay');
+  const label = c ? c.shortname : 'your semester';
+  let busy = false;
+
+  const shell = (inner, attrs = '') => `<div class="palette-backdrop" data-close>
+    <div class="palette picker exporter" ${attrs} role="dialog" aria-modal="true" aria-labelledby="exp-title">${inner}</div></div>`;
+  const isOpen = () => !!overlay.querySelector('.exporter');
+  const close = () => { if (!busy) { overlay.innerHTML = ''; overlay.onclick = null; } };
+  const option = (kind, ic, title, sub) => `<li><button class="exp-opt" data-exp="${kind}">
+    <span class="ico">${icon(ic, 19)}</span><span class="main"><span class="t">${title}</span><span class="s">${sub}</span></span></button></li>`;
+
+  const choose = () => {
+    overlay.innerHTML = shell(`
+      <div class="picker-head">
+        <h2 id="exp-title">${c ? `Give Claude ${esc(c.shortname)}` : 'Give Claude your semester'}</h2>
+        <p>${c ? 'Packs your deadlines, grades, announcements and course material into something Claude can read.' : 'Packs what is due and how you are doing in every course you are taking.'} It is made on your computer. Nothing goes anywhere until you paste or upload it yourself.</p>
+      </div>
+      <ul class="exp-list">
+        ${option('copy', 'copy', 'Copy as text', 'Paste it straight into a Claude chat.')}
+        ${option('md', 'page', c ? 'Download context.md' : 'Download as a .md file', 'One file you can add to a Claude Project.')}
+        ${c ? option('zip', 'archive', 'Download everything (.zip)', 'context.md and every course file, plus a CLAUDE.md for Claude Code.') : ''}
+      </ul>
+      ${c ? `<label class="exp-check"><input type="checkbox" data-exp-details ${settings.exportDetails ? 'checked' : ''}><span>Also read assignment descriptions and pages (a bit slower)</span></label>` : ''}
+      <div class="picker-foot"><span class="grow"></span><button class="btn" data-exp-close>Cancel</button></div>`);
+    overlay.querySelector('.exp-opt')?.focus();
+  };
+
+  const progress = ({ label: text, done, total }) => {
+    if (!isOpen()) return;
+    let status = overlay.querySelector('.exp-status');
+    if (!status) {
+      overlay.innerHTML = shell(`<div class="picker-head"><h2 id="exp-title">Packing ${esc(label)}</h2><p class="exp-status" aria-live="polite"></p></div><div class="exp-bar"><span></span></div>`, 'data-busy');
+      status = overlay.querySelector('.exp-status');
+    }
+    status.textContent = total ? `${text} (${done} of ${total})` : `${text}...`;
+    overlay.querySelector('.exp-bar span').style.width = total ? `${Math.max(6, Math.round((done / total) * 100))}%` : '8%';
+  };
+
+  const finish = ({ title, lines = [], steps = [], downloadId = null, again = false }) => {
+    if (!isOpen()) { toast(title); return; }
+    overlay.innerHTML = shell(`
+      <div class="picker-head"><h2 id="exp-title">${esc(title)}</h2>${lines.map((l) => `<p>${esc(l)}</p>`).join('')}</div>
+      ${steps.length ? `<div class="exp-done"><b>What to do next</b><ol>${steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol></div>` : ''}
+      <div class="picker-foot"><span class="grow"></span>
+        ${again ? '<button class="btn" data-exp-again>Try again</button>' : ''}
+        ${downloadId ? `<button class="btn" data-exp-show="${downloadId}">Show in folder</button>` : ''}
+        <button class="btn primary" data-exp-close>Done</button></div>`);
+    overlay.querySelector('.btn.primary').focus();
+  };
+
+  const run = async (kind) => {
+    busy = true;
+    const details = overlay.querySelector('[data-exp-details]')?.checked ?? settings.exportDetails;
+    progress({ label: c ? 'Refreshing the course page' : 'Putting your semester together' });
+    try {
+      if (c && details !== settings.exportDetails) settings = await store.saveSettings({ exportDetails: details });
+      let markdown;
+      let files = { entries: [], paths: null, skipped: [], count: 0 };
+      let model = null;
+      if (!c) {
+        markdown = exp.renderSemester({ courses: tracked(), db, settings });
+      } else {
+        await chrome.runtime.sendMessage({ type: 'sync-course', id: c.id }).catch(() => {});
+        Object.assign(db, await store.getMany(['contents', 'fresh', 'events', 'done', 'inbox']));
+        model = await exp.collectCourse(c, { db, settings, details, onProgress: progress });
+        if (kind === 'zip') files = await exp.fetchFiles(c, model.sections, { onProgress: progress });
+        markdown = exp.renderContext(model, { paths: files.paths, skipped: files.skipped });
+      }
+      const words = exp.wordCount(markdown).toLocaleString();
+      const mdName = c ? `${safeName(c.shortname)} context.md` : 'Semester for Claude.md';
+      const mdBlob = () => new Blob([markdown], { type: 'text/markdown' });
+      const mdSteps = [
+        'Open your Claude Project and add this file to the project knowledge.',
+        "If Claude doesn't take .md files, rename it to .txt first. It is plain text either way.",
+        'Export again whenever you want fresh deadlines and grades, and replace the old file.',
+      ];
+
+      if (kind === 'copy') {
+        try {
+          await navigator.clipboard.writeText(markdown);
+          busy = false;
+          finish({
+            title: 'Copied',
+            lines: [`${words} words are on your clipboard.`],
+            steps: ['Open a chat in Claude and paste it.', 'Or open a Claude Project and add it as text content, so every chat in that project can use it.'],
+          });
+          return;
+        } catch (err) {
+          // The browser refused the clipboard, so save a file instead.
+          const saved = await saveBlob(mdBlob(), mdName, c?.shortname);
+          busy = false;
+          finish({ title: 'Saved as a file instead', lines: [`The browser wouldn't let Sceleton use the clipboard, so it saved Downloads/${saved.path}.`], steps: ['Open the file, select all, and copy it from there.'], downloadId: saved.downloadId });
+          return;
+        }
+      }
+      if (kind === 'md') {
+        const saved = await saveBlob(mdBlob(), mdName, c?.shortname);
+        busy = false;
+        finish({ title: 'Saved', lines: [`Downloads/${saved.path} (${words} words)`], steps: mdSteps, downloadId: saved.downloadId });
+        return;
+      }
+      progress({ label: 'Building the zip' });
+      const blob = exp.buildZip({ course: c, markdown, at: model.at, files: files.entries });
+      const saved = await saveBlob(blob, `${safeName(c.shortname)} for Claude.zip`, c.shortname);
+      busy = false;
+      const lines = [`Downloads/${saved.path} (${fmtSize(blob.size)}, ${files.entries.length} course ${files.entries.length === 1 ? 'file' : 'files'})`];
+      if (files.skipped.length) lines.push(`${files.skipped.length} ${files.skipped.length === 1 ? 'file was' : 'files were'} left out. The end of context.md says which and why.`);
+      finish({
+        title: 'Saved',
+        lines,
+        steps: [
+          'Claude Code: unzip it, open a terminal inside the unzipped folder and run claude. It reads CLAUDE.md and context.md on its own.',
+          "Claude Project: unzip it, then upload context.md and the PDFs you want. Projects take single files, not zips, and Claude's upload list doesn't mention PowerPoint, so save slides as PDF first.",
+        ],
+        downloadId: saved.downloadId,
+      });
+    } catch (err) {
+      busy = false;
+      console.warn('Sceleton: export failed', err);
+      finish({
+        title: "That didn't work",
+        lines: [err instanceof scele.NotLoggedIn ? 'You are logged out of SCeLE. Log in and try again.' : `${err.message || 'Something went wrong.'}`],
+        again: true,
+      });
+    }
+  };
+
+  choose();
+  overlay.onclick = (e) => {
+    if (e.target.hasAttribute('data-close') || e.target.closest('[data-exp-close]')) { close(); return; }
+    const pick = e.target.closest('[data-exp]');
+    if (pick && !busy) { run(pick.dataset.exp); return; }
+    const show = e.target.closest('[data-exp-show]');
+    if (show) chrome.downloads.show(Number(show.dataset.expShow));
+    if (e.target.closest('[data-exp-again]')) choose();
+  };
+}
+
 // ------------------------------------------------------------ calendar export
 
 function exportIcs() {
@@ -761,6 +906,8 @@ document.addEventListener('click', async (e) => {
 
   if (act === 'search') openPalette();
   else if (act === 'pick-courses') openCoursePicker();
+  else if (act === 'export') openExport(id);
+  else if (act === 'export-semester') openExport(null);
   else if (act === 'theme') settings = await store.toggleTheme(settings);
   else if (act === 'dismiss-pick') await store.saveSettings({ coursesChosen: true });
   else if (act === 'track') {
@@ -851,7 +998,10 @@ document.addEventListener('click', async (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && $('.picker')) { $('#overlay').innerHTML = ''; return; }
+  if (e.key === 'Escape' && $('.picker')) {
+    if (!$('.exporter[data-busy]')) $('#overlay').innerHTML = '';
+    return;
+  }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); }
   else if (e.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) { e.preventDefault(); openPalette(); }
   else if ((e.key === 'Enter' || e.key === ' ') && document.activeElement?.dataset.act === 'grade') { e.preventDefault(); document.activeElement.click(); }

@@ -9,6 +9,7 @@ Log in at http://127.0.0.1:8765/login/index.php with any username and the
 password "pw". Extra endpoints for tests:
     POST /__dev/add-material?course=101   pretend a lecturer uploaded something
     POST /__dev/add-notification          pretend someone posted an announcement
+    POST /__dev/add-page?course=101       add a text "Page" activity to a course
     POST /__dev/logout                    end every session
 """
 
@@ -158,6 +159,18 @@ GRADE_ITEMS = {
 }
 
 
+ANNOUNCEMENTS = {
+    101: [
+        {"id": 7701, "discussion": 7701, "name": "Deadline Tugas Individu 7 diperpanjang", "subject": "Deadline Tugas Individu 7 diperpanjang",
+         "message": "<p>Halo semua, deadline <b>Tugas Individu 7</b> diperpanjang sampai malam ini jam 23.55.</p><ul><li>Push ke GitHub</li><li>Deploy ke PWS</li></ul>",
+         "timemodified": int(START - 3 * 3600), "userfullname": "Kak Sheryl"},
+        {"id": 7700, "discussion": 7700, "name": "Welcome to PBP", "subject": "Welcome to PBP",
+         "message": "<p>Selamat datang! Kuis dan tugas diumumkan di sini. Lihat <a href=\"https://example.com/rps\">RPS</a> untuk jadwal.</p>",
+         "timemodified": int(START - 40 * 86400), "userfullname": "Pak Chan"},
+    ],
+}
+
+
 def find_module(mid):
     for cid, secs in CONTENTS.items():
         for s in secs:
@@ -203,6 +216,11 @@ def ws(fn, a):
         return True
     if fn == "core_course_get_contents":
         return ws_contents(int(a["courseid"]))
+    if fn == "mod_forum_get_forums_by_courses":
+        cid = int(a["courseids"][0])
+        return [{"id": cid * 10, "course": cid, "type": "news", "name": "Announcements", "cmid": 0}]
+    if fn == "mod_forum_get_forum_discussions":
+        return {"discussions": ANNOUNCEMENTS.get(int(a["forumid"]) // 10, []), "warnings": []}
     if fn == "gradereport_overview_get_course_grades":
         return {"grades": [{"courseid": c["id"], "grade": GRADES.get(c["id"], "-"), "rawgrade": None} for c in COURSES + PAST], "warnings": []}
     if fn == "gradereport_user_get_grade_items":
@@ -269,9 +287,16 @@ def page_activity(mod, mid):
     cid, s, m = find_module(mid)
     if not m:
         return "<h1>Not found</h1>"
+    intro = ""
+    if m["modname"] == "assign":
+        intro = (f'<div id="intro" class="box py-3 generalbox boxaligncenter"><div class="no-overflow"><p>Implement the features listed in the handout for <b>{html.escape(m["name"])}</b>.</p>'
+                 '<ul><li>Push your code to GitHub</li><li>Submit the repository link</li></ul></div></div>')
+    elif m["modname"] == "page":
+        intro = ('<div class="box generalbox"><div class="no-overflow"><h3>Grading policy</h3>'
+                 '<p>Quizzes count for 30%, labs for 30% and the final project for 40%.</p></div></div>')
     e = next((x for x in EVENTS if x["url"].endswith(f"id={mid}")), None)
     due = datetime.fromtimestamp(e["timesort"], JAKARTA).strftime("%A, %d %B %Y, %H:%M") if e else "No due date"
-    return f"""<h1>{html.escape(m['name'])}</h1>
+    return f"""<h1>{html.escape(m['name'])}</h1>{intro}
       <div class="card"><b>Opened:</b> Monday, 20 October 2026, 00:00<br><b>Due:</b> {due}</div>
       <div class="card"><h3>Submission status</h3><table><tr><th>Submission status</th><td>No submissions have been made yet</td></tr>
       <tr><th>Grading status</th><td>Not graded</td></tr><tr><th>Time remaining</th><td>See the due date above</td></tr></table>
@@ -385,6 +410,10 @@ class Handler(BaseHTTPRequestHandler):
             n = sum(1 for s in CONTENTS[cid] for m in s["modules"] if m["modname"] == "resource")
             m = add_module(cid, len(CONTENTS[cid]) - 1, {"id": nid(), "name": q.get("name", f"Slides: Midterm review part {n}"), "modname": "resource",
                                                           "contents": [file(q.get("file", "Midterm review.pdf"), 2_400_000, 0)]})
+            return self.send({"added": m["id"]}, "application/json")
+        if u.path == "/__dev/add-page":
+            cid = int(q.get("course", 101))
+            m = add_module(cid, len(CONTENTS[cid]) - 1, {"id": nid(), "name": q.get("name", "Grading policy"), "modname": "page"})
             return self.send({"added": m["id"]}, "application/json")
         if u.path == "/__dev/add-notification":
             n = {"id": max(x["id"] for x in NOTIFS) + 1, "subject": q.get("subject", "OS KI: Lab 4 clarification"),

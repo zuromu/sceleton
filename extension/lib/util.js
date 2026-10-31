@@ -28,6 +28,20 @@ export function stripHtml(s) {
     .trim();
 }
 
+// Like stripHtml, but keeps list bullets, table rows and link addresses, so
+// an assignment description still reads properly as plain text.
+export function htmlToText(html) {
+  return stripHtml(String(html ?? '')
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, '')
+    .replace(/<li[^>]*>/gi, '\n- ')
+    .replace(/<\/t[dh]>/gi, ' | ')
+    .replace(/<\/tr>/gi, '\n')
+    .replace(/<a\s[^>]*href="(https?:[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href, label) => {
+      const text = label.replace(/<[^>]+>/g, '').trim();
+      return !text || text === href ? href : `${text} (${href})`;
+    }));
+}
+
 // "in 3h 12m", "2d 4h ago"
 export function rel(ts, from = now()) {
   const diff = ts - from;

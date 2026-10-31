@@ -7,7 +7,8 @@
 //   node dev/e2e.mjs [--limited] [--no-shots]
 
 import { chromium } from 'playwright';
-import { mkdtempSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -243,6 +244,115 @@ await app.click('.grade-row:has-text("Platform-Based Programming")');
 await app.waitForSelector('.grade-detail table');
 ok(await app.locator('.grade-detail tr').count() >= 8, 'grade breakdown opens');
 if (SHOTS && !LIMITED) await app.screenshot({ path: join(shots, 'grades.png'), fullPage: true });
+
+// ------------------------------------------------------------ 5b. export for Claude
+await fetch(`${MOCK}/__dev/add-page?course=101`, { method: 'POST' });
+await app.goto(`${APP}#/courses/101`);
+await app.waitForSelector('.course-head');
+// capture the clipboard and every file Sceleton saves, without touching the real ones
+await app.evaluate(() => {
+  window.__clip = null;
+  navigator.clipboard.writeText = async (t) => { window.__clip = t; };
+  window.__saved = [];
+  const real = chrome.downloads.download.bind(chrome.downloads);
+  chrome.downloads.download = (o) => {
+    fetch(o.url).then((r) => r.arrayBuffer()).then((b) => window.__saved.push({ name: o.filename, bytes: Array.from(new Uint8Array(b)) }));
+    return real(o);
+  };
+});
+await app.click('[data-act="export"]');
+await app.waitForSelector('.exporter .exp-opt');
+ok(await app.locator('.exp-opt').count() === 3, 'export offers copy, .md and .zip for a course');
+if (SHOTS && !LIMITED) await app.screenshot({ path: join(shots, 'export.png') });
+
+await app.click('[data-exp="copy"]');
+await app.waitForSelector('.exporter .exp-done', { timeout: 60000 });
+const md = await app.evaluate(() => window.__clip);
+ok(md?.startsWith('# Platform-Based Programming'), 'copied text starts with the course name');
+ok(/Course code: PBP KI/.test(md), 'copied text has the course code');
+ok(/My grade so far: 88\.40/.test(md), 'copied text has the grade so far');
+ok(/\*\*Tugas Individu 7\*\* \(Assignment\), due .*\(in \d+h/.test(md), 'copied text lists upcoming deadlines with a countdown');
+ok(/Implement the features listed in the handout for Tugas Individu 7\./.test(md) && /- Push your code to GitHub/.test(md), 'copied text has the assignment description, with its bullets');
+ok(/Quizzes count for 30%/.test(md), 'copied text has the text of course pages');
+ok(/Slides week 1: Web and Django basics/.test(md), 'copied text lists the course material');
+if (!LIMITED) {
+  ok(/### Deadline Tugas Individu 7 diperpanjang/.test(md) && /- Deploy ke PWS/.test(md), 'copied text has announcements, with their bullets');
+  ok(/RPS \(https:\/\/example\.com\/rps\)/.test(md), 'links in announcements keep their address');
+} else {
+  ok(/couldn't be read on this SCeLE/.test(md) && /Recent SCeLE notifications/.test(md), 'without the forum API it says so and falls back to notifications');
+}
+ok(!/undefined|\[object|NaN|—/.test(md), 'no stray "undefined" or em dashes in the text');
+ok(!/Machine Learning|Advanced Programming/.test(md), 'only that course is in there');
+await app.click('.exporter [data-exp-close]');
+
+// .md download
+await app.click('[data-act="export"]');
+await app.click('[data-exp="md"]');
+await app.waitForSelector('.exporter .exp-done', { timeout: 60000 });
+await until(async () => (await app.evaluate(() => window.__saved.length)) >= 1);
+let saved = await app.evaluate(() => window.__saved);
+ok(saved[0]?.name === 'SCeLE/PBP KI/PBP KI context.md', `context.md goes to Downloads/SCeLE/<course> (${saved[0]?.name})`);
+ok(Buffer.from(saved[0].bytes).toString('utf8').startsWith('# Platform-Based Programming'), 'the saved file is the same text');
+await app.click('.exporter [data-exp-close]');
+
+// .zip download
+await app.click('[data-act="export"]');
+await app.uncheck('[data-exp-details]');
+await app.click('[data-exp="zip"]');
+await app.waitForSelector('.exporter .exp-done', { timeout: 90000 });
+ok((await storage('settings')).settings?.exportDetails === false, 'remembers the "read descriptions" choice');
+await until(async () => (await app.evaluate(() => window.__saved.length)) >= 2);
+saved = await app.evaluate(() => window.__saved);
+const zipFile = saved[1];
+ok(zipFile?.name === 'SCeLE/PBP KI/PBP KI for Claude.zip', `zip goes to Downloads/SCeLE/<course> (${zipFile?.name})`);
+const zipPath = join(DOWNLOADS, 'export.zip');
+writeFileSync(zipPath, Buffer.from(zipFile.bytes));
+const py = `
+import json, sys, zipfile
+z = zipfile.ZipFile(sys.argv[1])
+names = z.namelist()
+out = {"bad": z.testzip(), "names": names}
+slide = "PBP KI/files/Week 1 - Web and Django basics/W01 Web and Django basics.pdf"
+out["slide"] = z.read(slide).decode() if slide in names else None
+out["claude"] = z.read("PBP KI/CLAUDE.md").decode()
+out["context"] = z.read("PBP KI/context.md").decode()
+print(json.dumps(out))`;
+const zinfo = JSON.parse(execFileSync('python3', ['-c', py, zipPath]).toString());
+ok(zinfo.bad === null, 'the zip passes Python\'s own integrity check (CRC and structure)');
+ok(zinfo.names.length >= 11, `zip holds context, CLAUDE.md and the course files (${zinfo.names.length} entries)`);
+ok(zinfo.slide !== null && /^fake contents of W01/.test(zinfo.slide), `a file inside the zip has the right name and contents (${JSON.stringify(zinfo.slide)})`);
+if (!LIMITED) ok(zinfo.names.includes('PBP KI/files/Week 2 - Models, views and templates/Lab 1 starter code/src/views.py'), 'folder files keep their subfolders');
+ok(/@context\.md/.test(zinfo.claude) && /files\//.test(zinfo.claude), 'CLAUDE.md points Claude Code at context.md');
+ok(zinfo.context.includes('saved as `files/Week 1 - Web and Django basics/W01 Web and Django basics.pdf`'), 'context.md says where each file is inside the zip');
+ok(!/Implement the features listed/.test(zinfo.context), 'unticking the descriptions option leaves them out');
+await app.click('.exporter [data-exp-close]');
+await store_reset_details();
+
+// whole semester
+await app.goto(`${APP}#/courses`);
+await app.waitForSelector('[data-act="export-semester"]');
+await app.click('[data-act="export-semester"]');
+ok(await app.locator('.exp-opt').count() === 2, 'semester export offers copy and .md only');
+await app.click('[data-exp="copy"]');
+await app.waitForSelector('.exporter .exp-done', { timeout: 30000 });
+const sem = await app.evaluate(() => window.__clip);
+ok(sem.startsWith('# My semester so far') && /### Platform-Based Programming \(PBP KI\)/.test(sem), 'semester text has each course');
+ok(/Grade so far: 88\.40/.test(sem) && /Due in the next 30 days/.test(sem), 'semester text has grades and what is due');
+ok(!/Machine Learning|ML assignment 2/.test(sem), 'semester text leaves out courses you are not taking');
+await app.click('.exporter [data-exp-close]');
+
+// from the search palette
+await app.goto(`${APP}#/courses/101`);
+await app.waitForSelector('.course-head');
+await app.keyboard.press('Control+K');
+await app.fill('.palette input', 'export');
+await wait(150);
+ok(/Export PBP KI for Claude/.test(await app.textContent('.palette li[aria-selected="true"] .t')), 'search offers "Export <course> for Claude" on a course page');
+await app.keyboard.press('Escape');
+
+async function store_reset_details() {
+  await sw.evaluate(() => chrome.storage.local.get('settings').then(({ settings }) => chrome.storage.local.set({ settings: { ...settings, exportDetails: true } })));
+}
 
 // search
 await app.goto(`${APP}#/home`);

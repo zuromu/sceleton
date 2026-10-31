@@ -21,6 +21,7 @@ Sceleton sits in your browser and does the looking for you.
 - **Downloads course files into tidy folders.** One click and every file goes to `Downloads/SCeLE/<course>/<week>/`. Next time it only grabs what's new.
 - **Searches everything.** Press Ctrl K (or ⌘ K) to search courses, files, deadlines and announcements. It handles typos.
 - **Collects announcements and grades in one place**, with an inbox for SCeLE notifications and a grades page with the full breakdown per course.
+- **Packs a course for Claude (or any AI chat) in one click.** The Export for Claude button on a course page builds a text file with your deadlines, grades, announcements, assignment descriptions and the list of course material. Copy it, save it as `context.md` for a Claude Project, or download a zip with every course file plus a `CLAUDE.md` for Claude Code. There is also a one page export of your whole semester. It's all built on your computer, and nothing is sent anywhere.
 - **Adds deadlines to your calendar** as an .ics file that works with Apple Calendar, Google Calendar and Outlook.
 - **Makes SCeLE itself nicer.** Optional dark mode for the SCeLE website, and a live countdown in the corner of every assignment and quiz page.
 
@@ -31,6 +32,7 @@ The two week strip at the top of the dashboard is the "spine": one vertebra per 
 | ![Toolbar popup](docs/screenshots/popup.png) | ![Course page with downloads](docs/screenshots/course.png) |
 | ![Search](docs/screenshots/search.png) | ![Countdown on an assignment page](docs/screenshots/countdown.png) |
 | ![Choosing courses](docs/screenshots/picker.png) | ![Dark mode](docs/screenshots/home-dark.png) |
+| ![Export for Claude](docs/screenshots/export.png) | |
 
 ## Install
 
@@ -78,6 +80,8 @@ extension/
   lib/scele.js       talking to SCeLE (API calls and HTML fallbacks)
   lib/data.js        keeping the saved copy up to date, spotting new material
   lib/store.js       settings and storage helpers
+  lib/export.js      builds the "Export for Claude" text and zip
+  lib/zip.js         a tiny zip file writer (no libraries)
   lib/views.js       pieces shared by the popup and dashboard (the spine, deadline rows)
   app/               the dashboard
   popup/             the toolbar popup
