@@ -78,7 +78,13 @@ export async function collectCourse(course, { db, settings, details = true, onPr
     model.announcements = await scele.getAnnouncements(id, 15);
   } catch (e) {
     if (e instanceof scele.NotLoggedIn) throw e;
-    model.notes.push("Announcements couldn't be read on this SCeLE, so they are left out.");
+    // The forum API is blocked on some sites, so read the pages instead.
+    try {
+      model.announcements = await scele.getAnnouncementsFromPages(sections, 15);
+    } catch (e2) {
+      if (e2 instanceof scele.NotLoggedIn) throw e2;
+      model.notes.push(`Announcements couldn't be read, so they are left out (${e.message}; then ${e2.message}).`);
+    }
   }
   if (!model.announcements?.length) {
     const short = course.shortname.toLowerCase();
@@ -214,7 +220,8 @@ export function renderContext(m, { paths = null, skipped = [] } = {}) {
   if (m.announcements?.length) {
     L.push('## Announcements', '', 'Newest first.', '');
     for (const a of m.announcements) {
-      L.push(`### ${a.title}`, '', `${dayOnly(a.time)}${a.author ? `, ${a.author}` : ''}`, '', a.text, '');
+      const meta = [a.time ? dayOnly(a.time) : '', a.author].filter(Boolean).join(', ');
+      L.push(`### ${a.title}`, '', ...(meta ? [meta, ''] : []), a.text, '');
     }
   } else if (m.notifications.length) {
     L.push('## Recent SCeLE notifications that mention this course', '');

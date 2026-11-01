@@ -271,6 +271,42 @@ export async function getAnnouncements(courseId, limit = 15) {
   });
 }
 
+// Backup for sites that block the forum API: open the Announcements page like
+// a person would, then each post. `sections` is the course's saved contents,
+// used to find the Announcements forum.
+export async function getAnnouncementsFromPages(sections, limit = 15) {
+  const forums = (sections || []).flatMap((s) => s.modules).filter((m) => m.modname === 'forum' && m.url);
+  const news = forums.find((m) => /announce|pengumuman|news|berita/i.test(m.name)) || forums[0];
+  if (!news) throw new Error('no Announcements forum on the course page');
+  const parse = (html) => new DOMParser().parseFromString(html, 'text/html');
+  const list = parse(await get(news.url.replace(SCELE_URL, '')));
+  const seen = new Map();
+  for (const a of list.querySelectorAll('a[href*="discuss.php?d="]')) {
+    const d = (a.getAttribute('href').match(/[?&]d=(\d+)/) || [])[1];
+    const title = a.textContent.replace(/\s+/g, ' ').trim();
+    if (d && title && !seen.has(d)) seen.set(d, title);
+  }
+  if (!seen.size) return [];
+  const out = [];
+  await Promise.all([...seen].slice(0, limit).map(async ([d, title], i) => {
+    try {
+      const doc = parse(await get(`/mod/forum/discuss.php?d=${d}`));
+      doc.querySelectorAll('script, style, .accesshide, .sr-only').forEach((n) => n.remove());
+      const body = doc.querySelector('.forum-post-container .post-content-container, .forumpost .posting, .posting');
+      const when = doc.querySelector('time[datetime]')?.getAttribute('datetime');
+      const author = doc.querySelector('.forum-post-container .author-info a, .forumpost .author a, .author a');
+      out[i] = {
+        id: Number(d), title: decode(title), author: author ? author.textContent.trim() : '',
+        time: when ? Math.floor(new Date(when).getTime() / 1000) || 0 : 0,
+        text: body ? htmlToText(body.innerHTML) : '', url: `${SCELE_URL}/mod/forum/discuss.php?d=${d}`,
+      };
+    } catch (e) {
+      if (e instanceof NotLoggedIn) throw e;
+    }
+  }));
+  return out.filter(Boolean);
+}
+
 // The written description on an assignment page ('assign') or the body of a
 // "Page" activity ('page'). Needs DOMParser, so it runs in the dashboard.
 export async function getActivityText(url, kind = 'assign') {

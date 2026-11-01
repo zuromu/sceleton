@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Sceleton",
   "short_name": "Sceleton",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A better way to use SCeLE: deadlines on your toolbar, reminders, new material alerts, one-click downloads and search.",
   "icons": {
     "16": "icons/16.png",

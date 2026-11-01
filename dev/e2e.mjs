@@ -275,12 +275,9 @@ ok(/\*\*Tugas Individu 7\*\* \(Assignment\), due .*\(in \d+h/.test(md), 'copied 
 ok(/Implement the features listed in the handout for Tugas Individu 7\./.test(md) && /- Push your code to GitHub/.test(md), 'copied text has the assignment description, with its bullets');
 ok(/Quizzes count for 30%/.test(md), 'copied text has the text of course pages');
 ok(/Slides week 1: Web and Django basics/.test(md), 'copied text lists the course material');
-if (!LIMITED) {
-  ok(/### Deadline Tugas Individu 7 diperpanjang/.test(md) && /- Deploy ke PWS/.test(md), 'copied text has announcements, with their bullets');
-  ok(/RPS \(https:\/\/example\.com\/rps\)/.test(md), 'links in announcements keep their address');
-} else {
-  ok(/couldn't be read on this SCeLE/.test(md) && /Recent SCeLE notifications/.test(md), 'without the forum API it says so and falls back to notifications');
-}
+ok(/### Deadline Tugas Individu 7 diperpanjang/.test(md) && /- Deploy ke PWS/.test(md), `copied text has announcements, with their bullets (${LIMITED ? 'read from the pages' : 'from the API'})`);
+ok(/RPS \(https:\/\/example\.com\/rps\)/.test(md), 'links in announcements keep their address');
+ok(!/Announcements couldn't be read/.test(md), 'no "couldn\'t be read" warning when announcements worked');
 ok(!/undefined|\[object|NaN|—/.test(md), 'no stray "undefined" or em dashes in the text');
 ok(!/Machine Learning|Advanced Programming/.test(md), 'only that course is in there');
 await app.click('.exporter [data-exp-close]');

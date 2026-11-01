@@ -371,6 +371,18 @@ class Handler(BaseHTTPRequestHandler):
             cid, s, m = find_module(int(q["id"]))
             f = (m or {}).get("contents", [{}])[0]
             return self.redirect(f"/pluginfile.php/{m['id']}/mod_resource/content/0/{f.get('filename', 'file.pdf')}")
+        if u.path == "/mod/forum/view.php":
+            cid, _, _m = find_module(int(q.get("id", 0)))
+            rows = "".join(f'<tr class="discussion"><td class="topic starter"><a href="{BASE}/mod/forum/discuss.php?d={d["discussion"]}">{html.escape(d["subject"])}</a></td></tr>' for d in ANNOUNCEMENTS.get(cid, []))
+            return self.send(layout("Announcements", f'<h1>Announcements</h1><table class="forumheaderlist"><tbody>{rows}</tbody></table>', sesskey))
+        if u.path == "/mod/forum/discuss.php":
+            d = next((x for v in ANNOUNCEMENTS.values() for x in v if str(x["discussion"]) == q.get("d")), None)
+            if not d:
+                return self.send(layout("Not found", "<h1>Not found</h1>", sesskey), status=404)
+            when = datetime.fromtimestamp(d["timemodified"], timezone.utc).isoformat()
+            body = (f'<article class="forum-post-container"><h3>{html.escape(d["subject"])}</h3><div class="author-info"><a href="#">{html.escape(d["userfullname"])}</a> <time datetime="{when}">posted</time></div>'
+                    f'<div class="post-content-container">{d["message"]}</div></article>')
+            return self.send(layout("Discussion", body, sesskey))
         if u.path.startswith("/mod/") and u.path.endswith("/view.php"):
             mod = u.path.split("/")[2]
             return self.send(layout("Activity", page_activity(mod, int(q.get("id", 0))), sesskey))
