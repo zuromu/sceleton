@@ -22,7 +22,7 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["storage", "alarms", "notifications", "downloads", "offscreen", "clipboardWrite"],
+  "permissions": ["storage", "alarms", "notifications", "downloads", "offscreen", "clipboardWrite", "nativeMessaging"],
   "host_permissions": ["https://scele.cs.ui.ac.id/*"],
   "content_scripts": [
     {

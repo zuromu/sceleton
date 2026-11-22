@@ -11,6 +11,8 @@
 //   grades     { list: [...], at, details: { [courseId]: {...} } }
 //   done       { [eventId]: true }               deadlines you ticked off yourself
 //   downloaded { [fileKey]: timestamp }
+//   vaultMarks { [path]: fingerprint }  what was last written for a notes app (see lib/vault.js)
+//   vaultCoursesDone  when the course pages were last written
 //   settings   see DEFAULT_SETTINGS
 
 export const DEFAULT_SETTINGS = {
@@ -26,6 +28,7 @@ export const DEFAULT_SETTINGS = {
   hiddenCourses: [],           // courses you're enrolled in but not really taking
   coursesChosen: false,        // has the "pick your courses" tip been dealt with?
   exportDetails: true,         // "Export for Claude" also reads assignment descriptions and pages
+  vaultExport: false,          // keep markdown copies of deadlines and courses in Downloads/<folder>/vault
 };
 
 export async function get(key, fallback) {

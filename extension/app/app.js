@@ -11,6 +11,7 @@ import * as data from '../lib/data.js';
 import * as scele from '../lib/scele.js';
 import * as exp from '../lib/export.js';
 import { courseFiles } from '../lib/export.js';
+import { coursePath } from '../lib/vault.js';
 import { icon, logo } from '../lib/icons.js';
 import { summary, spine, eventRow, groupedList, hue } from '../lib/views.js';
 import {
@@ -451,6 +452,7 @@ function settingsPage() {
         <select data-setting="theme"><option value="auto" ${settings.theme === 'auto' ? 'selected' : ''}>Match my computer</option><option value="light" ${settings.theme === 'light' ? 'selected' : ''}>Light</option><option value="dark" ${settings.theme === 'dark' ? 'selected' : ''}>Dark</option></select></div>
       <div class="setting"><div class="label"><b>Download folder</b><span>Inside your Downloads folder. Each course gets its own folder in here.</span></div>
         <input type="text" data-setting="downloadFolder" value="${esc(settings.downloadFolder)}" aria-label="Download folder"></div>
+      ${toggle('vaultExport', 'Deadlines file for a notes app', 'Keeps a markdown list of your deadlines in the download folder, under vault/deadlines.md. Handy for Obsidian.')}
     </div>
 
     <h2>Account and data</h2>
@@ -1015,7 +1017,39 @@ document.addEventListener('change', async (e) => {
   const value = el.type === 'checkbox' ? el.checked : el.value.trim() || store.DEFAULT_SETTINGS[key];
   await store.saveSettings({ [key]: value });
   if (key === 'downloadFolder') toast(`Files will go to Downloads/${safeName(value)}`);
+  if (key === 'vaultExport' && value) {
+    settings = await store.getSettings();
+    toast(`Writing your courses to Downloads/${safeName(settings.downloadFolder)}/vault`);
+    vaultCourses(true);
+  }
 });
+
+// ------------------------------------------------------------ course pages for a notes app
+
+// One markdown page per course in vault/courses/ (see lib/vault.js). This reads
+// SCeLE pages, so it runs here in the dashboard, at most every six hours.
+let vaultBusy = false;
+let vaultWarned = false;
+async function vaultCourses(force = false) {
+  if (!settings.vaultExport || vaultBusy || loggedOut()) return;
+  if (!force && await store.get('vaultCoursesDone', 0) > now() - 6 * HOUR) return;
+  vaultBusy = true;
+  try {
+    for (const c of tracked()) {
+      const model = await exp.collectCourse(c, { db, settings, details: settings.exportDetails });
+      const res = await chrome.runtime.sendMessage({ type: 'vault-file', path: coursePath(c), text: exp.renderContext(model) });
+      if (force && res?.how === 'download' && !vaultWarned) {
+        vaultWarned = true;
+        toast(`Saving these as downloads. For silent saving, set up the helper in native/ with this id: ${chrome.runtime.id}`);
+      }
+    }
+    await store.set('vaultCoursesDone', now());
+  } catch (e) {
+    console.warn('Sceleton: course pages for the vault', e);
+  } finally {
+    vaultBusy = false;
+  }
+}
 
 // ------------------------------------------------------------ start
 
@@ -1048,5 +1082,6 @@ window.addEventListener('hashchange', () => {
   render();
   onRoute();
   if (!db.events || db.events.at < now() - 5 * 60 || db.auth?.status !== 'ok') syncNow();
+  vaultCourses();
   setInterval(render, 60 * 1000); // keep countdowns ticking
 })();

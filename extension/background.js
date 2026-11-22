@@ -7,6 +7,8 @@ import { syncCore, syncContents } from './lib/data.js';
 import { setHtmlParser } from './lib/scele.js';
 import * as store from './lib/store.js';
 import { now, rel, safeName, HOUR, DAY, stripHtml } from './lib/util.js';
+import { writeVault, writeVaultFile, vaultNames, withoutDate } from './lib/vault.js';
+import { renderSemester } from './lib/export.js';
 
 const REFRESH = 'refresh';
 const DASHBOARD = chrome.runtime.getURL('app/index.html');
@@ -85,11 +87,29 @@ function refresh({ force = false } = {}) {
         console.warn('Sceleton: course pages', e);
       }
       await scheduleReminders(res.events, settings);
+      await syncVault(settings);
     }
     await updateBadge();
     return res;
   })().finally(() => { running = null; });
   return running;
+}
+
+// The markdown files for a notes app (see lib/vault.js). Never throws.
+async function syncVault(settings) {
+  if (!settings.vaultExport) return;
+  try {
+    const db = await store.getMany(['events', 'done', 'courses', 'grades']);
+    const visible = store.visibleEvents(db.events?.list, db.done || {}, settings);
+    await writeVault(visible, settings, store);
+    const courses = store.trackedCourses(db.courses?.list, settings);
+    const semester = renderSemester({ courses, db, settings });
+    // "in 3 hours" style wording changes by itself, so only the day counts here.
+    await writeVaultFile('semester.md', semester, settings, store,
+      `${Math.floor(now() / DAY)}|${visible.map((e) => `${e.id}@${e.time}`).join(',')}|${JSON.stringify(db.grades?.list || [])}`);
+  } catch (e) {
+    console.warn('Sceleton: vault files', e);
+  }
 }
 
 function ensureAlarm() {
@@ -214,7 +234,9 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
   if (changes.done || changes.settings) {
     updateBadge();
     const { events = {} } = await store.getMany(['events']);
-    scheduleReminders(events.list || [], await store.getSettings());
+    const settings = await store.getSettings();
+    scheduleReminders(events.list || [], settings);
+    syncVault(settings);
   }
 });
 
@@ -225,6 +247,17 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
 const pendingFolders = new Map();
 
 chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+  // Our own markdown files. Matched by address, or failing that (some browsers
+  // shorten long data: addresses) the one that has been waiting longest.
+  let vaultKey = vaultNames.has(item.url) ? item.url : null;
+  if (!vaultKey && item.byExtensionId === chrome.runtime.id && item.url.startsWith('data:text/markdown')) {
+    vaultKey = vaultNames.keys().next().value ?? null;
+  }
+  if (vaultKey) {
+    const filename = vaultNames.get(vaultKey);
+    vaultNames.delete(vaultKey);
+    return suggest({ filename, conflictAction: 'overwrite' });
+  }
   const folder = pendingFolders.get(item.url);
   if (!folder) return suggest();
   pendingFolders.delete(item.url);
@@ -279,6 +312,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   }
   if (msg.type === 'download') {
     downloadFiles(msg.files).then((n) => reply({ started: n }));
+    return true;
+  }
+  if (msg.type === 'vault-file') {
+    store.getSettings()
+      .then((settings) => settings.vaultExport && writeVaultFile(msg.path, msg.text, settings, store, withoutDate(msg.text)))
+      .then((how) => reply({ ok: true, how: how || 'unchanged' }))
+      .catch((e) => reply({ ok: false, error: e.message }));
     return true;
   }
   if (msg.type === 'open-dashboard') {
