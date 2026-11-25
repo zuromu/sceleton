@@ -580,17 +580,41 @@ def download(cli, f, dest):
         os.utime(dest, (f["timemodified"], f["timemodified"]))
 
 
-def needs_download(f, dest):
+SYNC_RECORD = ".scele-sync.json"
+
+
+def sync_action(f, dest, rec):
+    """What to do with one file: "download", "beside" (save the new version next
+    to yours) or "skip". `rec` is what we saw when we last downloaded it, or None."""
     if not dest.exists():
-        return True
+        return "download"
     st = dest.stat()
-    if f.get("filesize") and st.st_size != f["filesize"]:
-        return True
-    return f.get("timemodified", 0) > st.st_mtime + 1
+    local = [st.st_size, int(st.st_mtime)]
+    remote = [f.get("filesize") or 0, f.get("timemodified") or 0]
+    if rec is None:
+        # Not downloaded by this version, so we can't tell if you changed it.
+        same = (not remote[0] or local[0] == remote[0]) and remote[1] <= st.st_mtime + 1
+        return "skip" if same else "beside"
+    if rec["remote"] == remote:
+        return "skip"
+    return "download" if rec["local"] == local else "beside"
+
+
+def unique_path(path, used):
+    """Two files with the same name in one section must not replace each other."""
+    n = 2
+    out = path
+    while out in used:
+        out = path.with_name(f"{path.stem} ({n}){path.suffix}")
+        n += 1
+    used.add(out)
+    return out
 
 
 def cmd_sync(cli, args):
     root = Path(args.to).expanduser()
+    record_file = root / SYNC_RECORD
+    record = load_json(record_file, {})
     courses = [find_course(cli, args.course)] if args.course else get_courses(cli)
     with console.status("Reading course pages..."):
         with ThreadPoolExecutor(max_workers=4) as pool:
@@ -598,23 +622,39 @@ def cmd_sync(cli, args):
 
     new, same, failed = [], 0, 0
     for course, sections in zip(courses, contents):
+        used = set()
         for rel_path, f in collect_files(sections):
+            rel_path = unique_path(rel_path, used)
             dest = root / safe_name(course["shortname"]) / rel_path
-            if not needs_download(f, dest):
+            key = str(dest.relative_to(root))
+            action = sync_action(f, dest, record.get(key))
+            if action == "skip":
                 same += 1
                 continue
-            label = f"{course['shortname']}/{rel_path}"
+            target = dest
+            if action == "beside":
+                target = dest.with_name(f"{dest.stem} (new){dest.suffix}")
+            label = f"{course['shortname']}/{rel_path.parent / target.name}"
             if args.dry_run:
                 new.append(label)
                 continue
             try:
                 with console.status(f"Downloading {rel_path.name}..."):
-                    download(cli, f, dest)
+                    download(cli, f, target)
                 new.append(label)
+                if action == "download":
+                    st = dest.stat()
+                    local = [st.st_size, int(st.st_mtime)]
+                else:
+                    local = record.get(key, {}).get("local", [0, 0])
+                record[key] = {"remote": [f.get("filesize") or 0, f.get("timemodified") or 0], "local": local}
             except (SceleError, requests.RequestException) as e:
                 failed += 1
                 console.print(f"[red]✗[/] {label}: {e}")
 
+    if not args.dry_run and new:
+        root.mkdir(parents=True, exist_ok=True)
+        record_file.write_text(json.dumps(record, indent=1))
     verb = "Would download" if args.dry_run else "Downloaded"
     for label in new:
         console.print(f"[green]+[/] {label}")
