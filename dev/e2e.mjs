@@ -221,6 +221,7 @@ if (!LIMITED) {
   ok(asked.every((o) => !o.filename && /redirect=1/.test(o.url)), 'in HTML mode, files are fetched through the SCeLE file link');
 }
 ok(asked.every((o) => o.conflictAction === 'uniquify'), 'downloads never replace a file you already have');
+await until(async () => Object.keys((await storage('downloaded')).downloaded || {}).length === asked.length, 10000);
 const { downloaded } = await storage('downloaded');
 ok(Object.keys(downloaded || {}).length === asked.length, `remembers what was downloaded (${Object.keys(downloaded || {}).length})`);
 await app.waitForSelector('text=Download all again');
@@ -309,6 +310,15 @@ await app.click('.toggle:has(input[data-setting="darkScele"])');
 await fetch(`${MOCK}/__dev/logout`, { method: 'POST' });
 await sendFromPage(app, { type: 'refresh' });
 ok((await storage('auth')).auth?.status === 'loggedout', 'notices when the SCeLE session ends');
+
+// a download that gets SCeLE's login page instead of the file is not kept or remembered
+const allDownloads = () => sw.evaluate(() => chrome.downloads.search({}));
+const dlBefore = (await allDownloads()).length;
+await sendFromPage(app, { type: 'download', files: [{ url: asked[0].url, key: 'logged-out-file', folder: ['Course', 'Week'], name: asked[0].filename ? 'Lecture.pdf' : '' }] });
+await until(async () => (await allDownloads()).length > dlBefore && (await allDownloads()).every((d) => d.state !== 'in_progress'), 10000);
+await wait(1000);
+ok(!(await storage('downloaded')).downloaded?.['logged-out-file'], 'a login page saved as a file is not marked as downloaded');
+ok((await allDownloads()).length === dlBefore, 'and the login page is not left in Downloads');
 ok(await sw.evaluate(() => chrome.action.getBadgeText({})) === '!', 'badge goes back to "!"');
 await app.goto(`${APP}#/home`);
 await app.waitForSelector('.hello h1');
