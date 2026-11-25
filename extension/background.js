@@ -261,7 +261,7 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
   const folder = pendingFolders.get(item.url);
   if (!folder) return suggest();
   pendingFolders.delete(item.url);
-  suggest({ filename: `${folder}/${safeName(item.filename)}`, conflictAction: 'overwrite' });
+  suggest({ filename: `${folder}/${safeName(item.filename)}`, conflictAction: 'uniquify' });
 });
 
 async function downloadFiles(files) {
@@ -271,7 +271,7 @@ async function downloadFiles(files) {
   let started = 0;
   for (const f of files) {
     const folder = [root, ...f.folder.map(safeName)].join('/');
-    const opts = { url: f.url, conflictAction: 'overwrite', saveAs: false };
+    const opts = { url: f.url, conflictAction: 'uniquify', saveAs: false };
     if (f.name) opts.filename = `${folder}/${safeName(f.name)}`;
     else pendingFolders.set(f.url, folder);
     try {

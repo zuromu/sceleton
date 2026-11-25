@@ -220,6 +220,7 @@ if (!LIMITED) {
 } else {
   ok(asked.every((o) => !o.filename && /redirect=1/.test(o.url)), 'in HTML mode, files are fetched through the SCeLE file link');
 }
+ok(asked.every((o) => o.conflictAction === 'uniquify'), 'downloads never replace a file you already have');
 const { downloaded } = await storage('downloaded');
 ok(Object.keys(downloaded || {}).length === asked.length, `remembers what was downloaded (${Object.keys(downloaded || {}).length})`);
 await app.waitForSelector('text=Download all again');
