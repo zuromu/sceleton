@@ -639,7 +639,7 @@ function searchIndex() {
 }
 
 function openPalette() {
-  if ($('.palette')) return;
+  if ($('.palette') || loggedOut()) return; // saved data stays out of sight while logged out
   const index = searchIndex();
   let results = [];
   let sel = 0;
@@ -745,7 +745,7 @@ async function saveBlob(blob, name, folder) {
 // One course (courseId) or the whole semester (null), as text or as a zip.
 function openExport(courseId = null) {
   const c = courseId ? courseById(courseId) : null;
-  if (courseId && !c) return;
+  if ((courseId && !c) || loggedOut()) return;
   const overlay = $('#overlay');
   const label = c ? c.shortname : 'your semester';
   let busy = false;

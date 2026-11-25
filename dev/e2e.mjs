@@ -346,6 +346,9 @@ ok(await sw.evaluate(() => chrome.action.getBadgeText({})) === '!', 'badge goes 
 await app.goto(`${APP}#/home`);
 await app.waitForSelector('.hello h1');
 ok(true, 'dashboard asks you to log in again');
+await app.keyboard.press('Control+K');
+await wait(300);
+ok(await app.locator('.palette').count() === 0, 'search does not show saved data while logged out');
 
 // any errors in the extension pages?
 const errors = [];
