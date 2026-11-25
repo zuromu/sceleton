@@ -51,6 +51,12 @@ class TokenTest(unittest.TestCase):
         self.assertNotIn("SECRET-TOKEN", out.get())
 
 
+class LoginTest(unittest.TestCase):
+    def test_a_wrong_password_is_refused(self):
+        with self.assertRaises(scele.SceleError):
+            scele.web_login(scele.new_session(), "ahmad.hoesin", "wrong")
+
+
 class SyncTest(unittest.TestCase):
     def setUp(self):
         self.cli = login()

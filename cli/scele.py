@@ -169,7 +169,7 @@ def web_login(session, username, password):
                      timeout=30)
     r.raise_for_status()
     m = re.search(r'"sesskey":"([^"]+)"', r.text)
-    if not m:
+    if not m or "/login/" in r.url:  # the login page itself carries a sesskey too
         raise SceleError("Login failed. Double check your username and password.")
     uid = re.search(r"user/profile\.php\?id=(\d+)", r.text)
     return m.group(1), int(uid.group(1)) if uid else None

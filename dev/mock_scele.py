@@ -366,7 +366,8 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/login/index.php":
             form = {k: v[0] for k, v in parse_qs(raw).items()}
             if form.get("password") != "pw" or not form.get("logintoken"):
-                return self.send(layout("Log in", "<p style='color:#c00'>Invalid login, please try again</p>" + LOGIN_FORM.format(token="x")))
+                # like the real thing, the login page has a sesskey of its own
+                return self.send(layout("Log in", "<p style='color:#c00'>Invalid login, please try again</p>" + LOGIN_FORM.format(token="x"), sesskey="loginpage"))
             cookie = secrets.token_hex(12)
             SESSIONS[cookie] = secrets.token_hex(5)
             return self.redirect("/my/", {"Set-Cookie": f"MoodleSession={cookie}; Path=/; HttpOnly"})
