@@ -60,7 +60,7 @@ Download the new release, replace the old folder with the new one, then press th
 - **Sceleton never sees your password.** It uses the SCeLE login you already have in your browser, the same way the SCeLE website does.
 - **Everything stays on your computer.** Deadlines, course pages and settings are saved in your browser's extension storage. There is no server, no account and no analytics.
 - **It only talks to `scele.cs.ui.ac.id`.** You can check this in `manifest.json`: that's the only site it has permission to access.
-- **It only reads.** It never submits assignments, posts in forums or changes anything on SCeLE. The only thing it marks is notifications as read, when you open them in Sceleton.
+- **It never writes.** It never submits assignments, posts in forums or changes anything on SCeLE. The only thing it marks is notifications as read, when you open them in Sceleton. Reading is not invisible, though: when the website's API is blocked, Sceleton opens course pages like you would, and "Export for Claude" with the assignment and page option on opens those activities. SCeLE can log these as visits and count them towards activity completion.
 
 ## How it works
 
