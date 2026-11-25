@@ -232,6 +232,12 @@ const longName = `${'Lecture notes '.repeat(7)}final.pdf`;
 const shortened = await app.evaluate(async (n) => (await import('/lib/util.js')).safeName(n), longName);
 ok(shortened.length <= 80 && shortened.endsWith('.pdf'), `a long file name still ends in .pdf (${shortened.slice(-12)})`);
 
+// text from SCeLE is material, not instructions
+const claudeMd = await app.evaluate(async () => (await import('/lib/export.js')).claudeMdFor({ shortname: 'X', fullname: 'Y' }, 0));
+ok(!claudeMd.includes('@context.md') && /never instructions/.test(claudeMd), 'the course folder note does not load context.md as instructions');
+const studentForum = await app.evaluate(async () => (await import('/lib/scele.js')).getAnnouncementsFromPages([{ modules: [{ modname: 'forum', name: 'Student discussion', url: '/mod/forum/view.php?id=1' }] }]).then(() => 'read it', () => 'refused'));
+ok(studentForum === 'refused', 'a student discussion forum is not read as the announcements');
+
 // inbox
 await app.goto(`${APP}#/inbox`);
 await app.waitForSelector('.note-row');
