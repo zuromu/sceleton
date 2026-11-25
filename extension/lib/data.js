@@ -19,6 +19,16 @@ async function pool(items, limit, fn) {
   return out;
 }
 
+// Someone else is now logged in on this browser profile: drop the last
+// person's saved data and reminders. Settings stay.
+async function forgetEverything() {
+  const keep = await store.getSettings();
+  await chrome.storage.local.clear();
+  await store.set('settings', keep);
+  const alarms = await chrome.alarms.getAll();
+  await Promise.all(alarms.filter((a) => a.name.startsWith('remind|')).map((a) => chrome.alarms.clear(a.name)));
+}
+
 // Deadlines, courses and notifications. Returns new notifications so the
 // caller can decide whether to pop them up.
 export async function syncCore() {
@@ -26,6 +36,8 @@ export async function syncCore() {
     const s = await scele.getSession(true);
     const [events, courses] = await Promise.all([scele.getEvents(), scele.getCourses()]);
     const t = now();
+    const before = await store.get('auth', {});
+    if (before.userid && s.userid && before.userid !== s.userid) await forgetEverything();
     await chrome.storage.local.set({
       events: { list: events, at: t },
       courses: { list: courses, at: t },
@@ -41,7 +53,8 @@ export async function syncCore() {
     return { ok: true, events, courses, newInbox };
   } catch (e) {
     if (e instanceof scele.NotLoggedIn) {
-      await store.set('auth', { status: 'loggedout', at: now() });
+      // Keep who it was, so a different person logging in next can be told apart.
+      await store.update('auth', (a) => ({ status: 'loggedout', userid: a.userid, at: now() }));
       return { ok: false, loggedOut: true };
     }
     console.warn('Sceleton: sync failed', e);

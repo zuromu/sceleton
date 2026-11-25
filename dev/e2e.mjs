@@ -312,6 +312,17 @@ ok(await scelePage.evaluate(() => document.documentElement.classList.contains('s
 if (SHOTS && !LIMITED) await scelePage.screenshot({ path: join(shots, 'scele-dark.png') });
 await app.click('.toggle:has(input[data-setting="darkScele"])');
 
+// ------------------------------------------------------------ 7b. another student on the same browser profile
+const mine = await storage(['done', 'grades', 'settings']);
+ok(Object.keys(mine.done || {}).length > 0 && mine.grades?.details?.[101], 'the first student has ticks and grade details saved');
+await fetch(`${MOCK}/__dev/set-user?id=5151&name=Other%20Student`, { method: 'POST' });
+await sendFromPage(app, { type: 'refresh' });
+const theirs = await storage(['auth', 'done', 'grades', 'downloaded', 'settings']);
+ok(theirs.auth?.userid === 5151, 'syncs as the second student');
+ok(!theirs.done && !theirs.grades?.details && !theirs.downloaded, 'the first student\'s ticks, grade details and download history are gone');
+ok(JSON.stringify(theirs.settings) === JSON.stringify(mine.settings), 'settings stay');
+ok((await sw.evaluate(() => chrome.alarms.getAll())).filter((a) => a.name.startsWith('remind|')).length >= 10, 'reminders belong to the second student again');
+
 // ------------------------------------------------------------ 8. session ends
 await fetch(`${MOCK}/__dev/logout`, { method: 'POST' });
 await sendFromPage(app, { type: 'refresh' });
@@ -325,6 +336,7 @@ await until(async () => (await allDownloads()).length > dlBefore && (await allDo
 await wait(1000);
 ok(!(await storage('downloaded')).downloaded?.['logged-out-file'], 'a login page saved as a file is not marked as downloaded');
 ok((await allDownloads()).length === dlBefore, 'and the login page is not left in Downloads');
+ok((await storage('auth')).auth?.userid === 5151, 'remembers who was logged in, to tell the next person apart');
 ok(await sw.evaluate(() => chrome.action.getBadgeText({})) === '!', 'badge goes back to "!"');
 await app.goto(`${APP}#/home`);
 await app.waitForSelector('.hello h1');
