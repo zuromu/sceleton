@@ -9,6 +9,7 @@ Log in at http://127.0.0.1:8765/login/index.php with any username and the
 password "pw". Extra endpoints for tests:
     POST /__dev/add-material?course=101   pretend a lecturer uploaded something
     POST /__dev/add-notification          pretend someone posted an announcement
+    POST /__dev/set-grade?course=101&value=55.00   change the first grade item of a course
     POST /__dev/logout                    end every session
 """
 
@@ -392,6 +393,10 @@ class Handler(BaseHTTPRequestHandler):
                  "timecreated": int(time.time()), "read": False, "component": "mod_forum"}
             NOTIFS.append(n)
             return self.send(n, "application/json")
+        if u.path == "/__dev/set-grade":
+            cid = int(q.get("course", 101))
+            GRADE_ITEMS[cid][0] = (GRADE_ITEMS[cid][0][0], q.get("value", "55.00"))
+            return self.send({"ok": True}, "application/json")
         if u.path == "/__dev/logout":
             SESSIONS.clear()
             return self.send({"ok": True}, "application/json")

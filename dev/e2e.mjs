@@ -244,6 +244,12 @@ ok(await app.locator('.grade-row').count() === 10, `grades for 6 taken and 4 oth
 await app.click('.grade-row:has-text("Platform-Based Programming")');
 await app.waitForSelector('.grade-detail table');
 ok(await app.locator('.grade-detail tr').count() >= 8, 'grade breakdown opens');
+// a grade that changes later shows up the next time the breakdown is opened, once the saved copy is an hour old
+await app.click('.grade-row:has-text("Platform-Based Programming")');
+await fetch(`${MOCK}/__dev/set-grade?course=101&value=55.00`, { method: 'POST' });
+await sw.evaluate(() => chrome.storage.local.get('grades').then(({ grades }) => { grades.details[101].at -= 2 * 3600; return chrome.storage.local.set({ grades }); }));
+await app.click('.grade-row:has-text("Platform-Based Programming")');
+ok(await until(async () => /55\.00/.test(await app.textContent('.grade-detail')), 5000), 'an old grade breakdown is refreshed when opened');
 if (SHOTS && !LIMITED) await app.screenshot({ path: join(shots, 'grades.png'), fullPage: true });
 
 // search

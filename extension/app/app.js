@@ -389,7 +389,7 @@ function gradeRow(g) {
     else if (det) {
       detail = `<div class="grade-detail"><table><thead><tr><th>Item</th><th class="num">Grade</th><th class="num">Range</th><th class="num">%</th></tr></thead><tbody>
         ${det.items.map((it) => `<tr class="${it.kind === 'total' ? 'total' : ''}"><td>${esc(it.name)}</td><td class="num">${esc(it.grade)}</td><td class="num faint">${esc(it.range)}</td><td class="num">${esc(it.percent)}</td></tr>`).join('')}
-      </tbody></table></div>`;
+      </tbody></table><p class="faint" style="font-size:var(--t-s)">Updated ${esc(rel(det.at))}</p></div>`;
     } else detail = `<div class="grade-detail">${emptyNote("Couldn't load the grade breakdown.", '')}</div>`;
   }
   return `<li>
@@ -958,7 +958,8 @@ document.addEventListener('click', async (e) => {
     if (ui.gradeOpen.has(id)) ui.gradeOpen.delete(id);
     else {
       ui.gradeOpen.add(id);
-      if (!db.grades?.details?.[id]) {
+      const saved = db.grades?.details?.[id];
+      if (!saved || saved.at < now() - HOUR) {
         ui.gradeLoading.add(id);
         render();
         try { await data.syncCourseGrades(id); } catch (err) { console.warn(err); }
