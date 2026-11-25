@@ -227,6 +227,11 @@ ok(Object.keys(downloaded || {}).length === asked.length, `remembers what was do
 await app.waitForSelector('text=Download all again');
 ok(true, 'button changes to "Download all again"');
 
+// long file names keep their extension
+const longName = `${'Lecture notes '.repeat(7)}final.pdf`;
+const shortened = await app.evaluate(async (n) => (await import('/lib/util.js')).safeName(n), longName);
+ok(shortened.length <= 80 && shortened.endsWith('.pdf'), `a long file name still ends in .pdf (${shortened.slice(-12)})`);
+
 // inbox
 await app.goto(`${APP}#/inbox`);
 await app.waitForSelector('.note-row');

@@ -30,6 +30,13 @@ def login():
                          "cookies": session.cookies.get_dict(), "userid": uid})
 
 
+class NamesTest(unittest.TestCase):
+    def test_a_long_name_keeps_its_extension(self):
+        name = scele.safe_name("Lecture notes " * 7 + "final.pdf")
+        self.assertLessEqual(len(name), 80)
+        self.assertTrue(name.endswith(".pdf"))
+
+
 class SyncTest(unittest.TestCase):
     def setUp(self):
         self.cli = login()

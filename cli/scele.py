@@ -378,7 +378,11 @@ def safe_name(s):
     s = re.sub(r"\s*:\s*", " - ", strip_html(s))
     s = re.sub(r'[\\/*?"<>|\n\r\t]+', "-", s)
     s = re.sub(r"\s+", " ", s).strip(" .-")
-    return s[:80] or "untitled"
+    ext = re.search(r"\.\w{1,8}$", s)
+    ext = ext.group(0) if ext else ""
+    if len(s) > 80:
+        s = s[:80 - len(ext)] + ext  # a long name keeps its .pdf
+    return s or "untitled"
 
 
 def event_name(e):

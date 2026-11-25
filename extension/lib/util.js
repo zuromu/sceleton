@@ -119,12 +119,13 @@ export function fmtSize(bytes) {
 
 // Turns any text into something safe to use as a file or folder name.
 export function safeName(s) {
-  return stripHtml(s)
+  const name = stripHtml(s)
     .replace(/\s*:\s*/g, ' - ')
     .replace(/[\\/*?"<>|\n\r\t]+/g, '-')
     .replace(/\s+/g, ' ')
-    .replace(/^[\s.-]+|[\s.-]+$/g, '')
-    .slice(0, 80) || 'untitled';
+    .replace(/^[\s.-]+|[\s.-]+$/g, '');
+  const ext = (name.match(/\.\w{1,8}$/) || [''])[0]; // a long name keeps its .pdf
+  return (name.length > 80 ? name.slice(0, 80 - ext.length) + ext : name) || 'untitled';
 }
 
 // Tiny fuzzy matcher for the search palette. Returns a score, or 0 if no match.
