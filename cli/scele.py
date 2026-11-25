@@ -56,6 +56,11 @@ MODULE_ICONS = {
 }
 
 
+def http_error_text(e):
+    """The error text from `requests` has the whole address in it, token included."""
+    return f"SCeLE answered {e.response.status_code if e.response is not None else 'with an error'}"
+
+
 class SceleError(Exception):
     """An error we can explain to the user in one line."""
 
@@ -164,7 +169,7 @@ def web_login(session, username, password):
                      timeout=30)
     r.raise_for_status()
     m = re.search(r'"sesskey":"([^"]+)"', r.text)
-    if not m:
+    if not m or "/login/" in r.url:  # the login page itself carries a sesskey too
         raise SceleError("Login failed. Double check your username and password.")
     uid = re.search(r"user/profile\.php\?id=(\d+)", r.text)
     return m.group(1), int(uid.group(1)) if uid else None
@@ -378,7 +383,11 @@ def safe_name(s):
     s = re.sub(r"\s*:\s*", " - ", strip_html(s))
     s = re.sub(r'[\\/*?"<>|\n\r\t]+', "-", s)
     s = re.sub(r"\s+", " ", s).strip(" .-")
-    return s[:80] or "untitled"
+    ext = re.search(r"\.\w{1,8}$", s)
+    ext = ext.group(0) if ext else ""
+    if len(s) > 80:
+        s = s[:80 - len(ext)] + ext  # a long name keeps its .pdf
+    return s or "untitled"
 
 
 def event_name(e):
@@ -580,17 +589,41 @@ def download(cli, f, dest):
         os.utime(dest, (f["timemodified"], f["timemodified"]))
 
 
-def needs_download(f, dest):
+SYNC_RECORD = ".scele-sync.json"
+
+
+def sync_action(f, dest, rec):
+    """What to do with one file: "download", "beside" (save the new version next
+    to yours) or "skip". `rec` is what we saw when we last downloaded it, or None."""
     if not dest.exists():
-        return True
+        return "download"
     st = dest.stat()
-    if f.get("filesize") and st.st_size != f["filesize"]:
-        return True
-    return f.get("timemodified", 0) > st.st_mtime + 1
+    local = [st.st_size, int(st.st_mtime)]
+    remote = [f.get("filesize") or 0, f.get("timemodified") or 0]
+    if rec is None:
+        # Not downloaded by this version, so we can't tell if you changed it.
+        same = (not remote[0] or local[0] == remote[0]) and remote[1] <= st.st_mtime + 1
+        return "skip" if same else "beside"
+    if rec["remote"] == remote:
+        return "skip"
+    return "download" if rec["local"] == local else "beside"
+
+
+def unique_path(path, used):
+    """Two files with the same name in one section must not replace each other."""
+    n = 2
+    out = path
+    while out in used:
+        out = path.with_name(f"{path.stem} ({n}){path.suffix}")
+        n += 1
+    used.add(out)
+    return out
 
 
 def cmd_sync(cli, args):
     root = Path(args.to).expanduser()
+    record_file = root / SYNC_RECORD
+    record = load_json(record_file, {})
     courses = [find_course(cli, args.course)] if args.course else get_courses(cli)
     with console.status("Reading course pages..."):
         with ThreadPoolExecutor(max_workers=4) as pool:
@@ -598,23 +631,40 @@ def cmd_sync(cli, args):
 
     new, same, failed = [], 0, 0
     for course, sections in zip(courses, contents):
+        used = set()
         for rel_path, f in collect_files(sections):
+            rel_path = unique_path(rel_path, used)
             dest = root / safe_name(course["shortname"]) / rel_path
-            if not needs_download(f, dest):
+            key = str(dest.relative_to(root))
+            action = sync_action(f, dest, record.get(key))
+            if action == "skip":
                 same += 1
                 continue
-            label = f"{course['shortname']}/{rel_path}"
+            target = dest
+            if action == "beside":
+                target = dest.with_name(f"{dest.stem} (new){dest.suffix}")
+            label = f"{course['shortname']}/{rel_path.parent / target.name}"
             if args.dry_run:
                 new.append(label)
                 continue
             try:
                 with console.status(f"Downloading {rel_path.name}..."):
-                    download(cli, f, dest)
+                    download(cli, f, target)
                 new.append(label)
+                if action == "download":
+                    st = dest.stat()
+                    local = [st.st_size, int(st.st_mtime)]
+                else:
+                    local = record.get(key, {}).get("local", [0, 0])
+                record[key] = {"remote": [f.get("filesize") or 0, f.get("timemodified") or 0], "local": local}
             except (SceleError, requests.RequestException) as e:
                 failed += 1
-                console.print(f"[red]✗[/] {label}: {e}")
+                why = http_error_text(e) if isinstance(e, requests.HTTPError) else e
+                console.print(f"[red]✗[/] {label}: {why}")
 
+    if not args.dry_run and new:
+        root.mkdir(parents=True, exist_ok=True)
+        record_file.write_text(json.dumps(record, indent=1))
     verb = "Would download" if args.dry_run else "Downloaded"
     for label in new:
         console.print(f"[green]+[/] {label}")
@@ -884,7 +934,7 @@ def main(argv=None):
         console.print("[red]Can't reach SCeLE. Check your internet, or SCeLE might be down.[/]")
         sys.exit(1)
     except requests.HTTPError as e:
-        console.print(f"[red]SCeLE returned an error: {e}[/]")
+        console.print(f"[red]SCeLE returned an error: {http_error_text(e)}[/]")
         sys.exit(1)
     except KeyboardInterrupt:
         sys.exit(130)

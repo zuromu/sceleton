@@ -9,6 +9,8 @@ Log in at http://127.0.0.1:8765/login/index.php with any username and the
 password "pw". Extra endpoints for tests:
     POST /__dev/add-material?course=101   pretend a lecturer uploaded something
     POST /__dev/add-notification          pretend someone posted an announcement
+    POST /__dev/set-grade?course=101&value=55.00   change the first grade item of a course
+    POST /__dev/set-user?id=5151&name=Name  pretend another student is logging in
     POST /__dev/logout                    end every session
 """
 
@@ -364,7 +366,8 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/login/index.php":
             form = {k: v[0] for k, v in parse_qs(raw).items()}
             if form.get("password") != "pw" or not form.get("logintoken"):
-                return self.send(layout("Log in", "<p style='color:#c00'>Invalid login, please try again</p>" + LOGIN_FORM.format(token="x")))
+                # like the real thing, the login page has a sesskey of its own
+                return self.send(layout("Log in", "<p style='color:#c00'>Invalid login, please try again</p>" + LOGIN_FORM.format(token="x"), sesskey="loginpage"))
             cookie = secrets.token_hex(12)
             SESSIONS[cookie] = secrets.token_hex(5)
             return self.redirect("/my/", {"Set-Cookie": f"MoodleSession={cookie}; Path=/; HttpOnly"})
@@ -392,6 +395,13 @@ class Handler(BaseHTTPRequestHandler):
                  "timecreated": int(time.time()), "read": False, "component": "mod_forum"}
             NOTIFS.append(n)
             return self.send(n, "application/json")
+        if u.path == "/__dev/set-grade":
+            cid = int(q.get("course", 101))
+            GRADE_ITEMS[cid][0] = (GRADE_ITEMS[cid][0][0], q.get("value", "55.00"))
+            return self.send({"ok": True}, "application/json")
+        if u.path == "/__dev/set-user":
+            USER.update(id=int(q.get("id", 5151)), name=q.get("name", "Other Student"))
+            return self.send({"ok": True}, "application/json")
         if u.path == "/__dev/logout":
             SESSIONS.clear()
             return self.send({"ok": True}, "application/json")

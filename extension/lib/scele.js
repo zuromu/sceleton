@@ -276,7 +276,7 @@ export async function getAnnouncements(courseId, limit = 15) {
 // used to find the Announcements forum.
 export async function getAnnouncementsFromPages(sections, limit = 15) {
   const forums = (sections || []).flatMap((s) => s.modules).filter((m) => m.modname === 'forum' && m.url);
-  const news = forums.find((m) => /announce|pengumuman|news|berita/i.test(m.name)) || forums[0];
+  const news = forums.find((m) => /announce|pengumuman|news|berita/i.test(m.name)); // not just any forum: those hold other students' posts
   if (!news) throw new Error('no Announcements forum on the course page');
   const parse = (html) => new DOMParser().parseFromString(html, 'text/html');
   const list = parse(await get(news.url.replace(SCELE_URL, '')));

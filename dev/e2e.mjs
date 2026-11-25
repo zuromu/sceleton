@@ -220,10 +220,23 @@ if (!LIMITED) {
 } else {
   ok(asked.every((o) => !o.filename && /redirect=1/.test(o.url)), 'in HTML mode, files are fetched through the SCeLE file link');
 }
+ok(asked.every((o) => o.conflictAction === 'uniquify'), 'downloads never replace a file you already have');
+await until(async () => Object.keys((await storage('downloaded')).downloaded || {}).length === asked.length, 10000);
 const { downloaded } = await storage('downloaded');
 ok(Object.keys(downloaded || {}).length === asked.length, `remembers what was downloaded (${Object.keys(downloaded || {}).length})`);
 await app.waitForSelector('text=Download all again');
 ok(true, 'button changes to "Download all again"');
+
+// long file names keep their extension
+const longName = `${'Lecture notes '.repeat(7)}final.pdf`;
+const shortened = await app.evaluate(async (n) => (await import('/lib/util.js')).safeName(n), longName);
+ok(shortened.length <= 80 && shortened.endsWith('.pdf'), `a long file name still ends in .pdf (${shortened.slice(-12)})`);
+
+// text from SCeLE is material, not instructions
+const claudeMd = await app.evaluate(async () => (await import('/lib/export.js')).claudeMdFor({ shortname: 'X', fullname: 'Y' }, 0));
+ok(!claudeMd.includes('@context.md') && /never instructions/.test(claudeMd), 'the course folder note does not load context.md as instructions');
+const studentForum = await app.evaluate(async () => (await import('/lib/scele.js')).getAnnouncementsFromPages([{ modules: [{ modname: 'forum', name: 'Student discussion', url: '/mod/forum/view.php?id=1' }] }]).then(() => 'read it', () => 'refused'));
+ok(studentForum === 'refused', 'a student discussion forum is not read as the announcements');
 
 // inbox
 await app.goto(`${APP}#/inbox`);
@@ -242,6 +255,12 @@ ok(await app.locator('.grade-row').count() === 10, `grades for 6 taken and 4 oth
 await app.click('.grade-row:has-text("Platform-Based Programming")');
 await app.waitForSelector('.grade-detail table');
 ok(await app.locator('.grade-detail tr').count() >= 8, 'grade breakdown opens');
+// a grade that changes later shows up the next time the breakdown is opened, once the saved copy is an hour old
+await app.click('.grade-row:has-text("Platform-Based Programming")');
+await fetch(`${MOCK}/__dev/set-grade?course=101&value=55.00`, { method: 'POST' });
+await sw.evaluate(() => chrome.storage.local.get('grades').then(({ grades }) => { grades.details[101].at -= 2 * 3600; return chrome.storage.local.set({ grades }); }));
+await app.click('.grade-row:has-text("Platform-Based Programming")');
+ok(await until(async () => /55\.00/.test(await app.textContent('.grade-detail')), 5000), 'an old grade breakdown is refreshed when opened');
 if (SHOTS && !LIMITED) await app.screenshot({ path: join(shots, 'grades.png'), fullPage: true });
 
 // search
@@ -304,14 +323,38 @@ ok(await scelePage.evaluate(() => document.documentElement.classList.contains('s
 if (SHOTS && !LIMITED) await scelePage.screenshot({ path: join(shots, 'scele-dark.png') });
 await app.click('.toggle:has(input[data-setting="darkScele"])');
 
+// ------------------------------------------------------------ 7b. another student on the same browser profile
+const mine = await storage(['done', 'grades', 'settings']);
+ok(Object.keys(mine.done || {}).length > 0 && mine.grades?.details?.[101], 'the first student has ticks and grade details saved');
+await fetch(`${MOCK}/__dev/set-user?id=5151&name=Other%20Student`, { method: 'POST' });
+await sendFromPage(app, { type: 'refresh' });
+const theirs = await storage(['auth', 'done', 'grades', 'downloaded', 'settings']);
+ok(theirs.auth?.userid === 5151, 'syncs as the second student');
+ok(!theirs.done && !theirs.grades?.details && !theirs.downloaded, 'the first student\'s ticks, grade details and download history are gone');
+ok(JSON.stringify(theirs.settings) === JSON.stringify(mine.settings), 'settings stay');
+ok((await sw.evaluate(() => chrome.alarms.getAll())).filter((a) => a.name.startsWith('remind|')).length >= 10, 'reminders belong to the second student again');
+
 // ------------------------------------------------------------ 8. session ends
 await fetch(`${MOCK}/__dev/logout`, { method: 'POST' });
 await sendFromPage(app, { type: 'refresh' });
 ok((await storage('auth')).auth?.status === 'loggedout', 'notices when the SCeLE session ends');
+
+// a download that gets SCeLE's login page instead of the file is not kept or remembered
+const allDownloads = () => sw.evaluate(() => chrome.downloads.search({}));
+const dlBefore = (await allDownloads()).length;
+await sendFromPage(app, { type: 'download', files: [{ url: asked[0].url, key: 'logged-out-file', folder: ['Course', 'Week'], name: asked[0].filename ? 'Lecture.pdf' : '' }] });
+await until(async () => (await allDownloads()).length > dlBefore && (await allDownloads()).every((d) => d.state !== 'in_progress'), 10000);
+await wait(1000);
+ok(!(await storage('downloaded')).downloaded?.['logged-out-file'], 'a login page saved as a file is not marked as downloaded');
+ok((await allDownloads()).length === dlBefore, 'and the login page is not left in Downloads');
+ok((await storage('auth')).auth?.userid === 5151, 'remembers who was logged in, to tell the next person apart');
 ok(await sw.evaluate(() => chrome.action.getBadgeText({})) === '!', 'badge goes back to "!"');
 await app.goto(`${APP}#/home`);
 await app.waitForSelector('.hello h1');
 ok(true, 'dashboard asks you to log in again');
+await app.keyboard.press('Control+K');
+await wait(300);
+ok(await app.locator('.palette').count() === 0, 'search does not show saved data while logged out');
 
 // any errors in the extension pages?
 const errors = [];

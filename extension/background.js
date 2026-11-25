@@ -261,30 +261,52 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
   const folder = pendingFolders.get(item.url);
   if (!folder) return suggest();
   pendingFolders.delete(item.url);
-  suggest({ filename: `${folder}/${safeName(item.filename)}`, conflictAction: 'overwrite' });
+  suggest({ filename: `${folder}/${safeName(item.filename)}`, conflictAction: 'uniquify' });
 });
+
+// Which file key goes with which download, so it can be remembered once the
+// file has really arrived (see onChanged below).
+const downloadKeys = new Map();
 
 async function downloadFiles(files) {
   const settings = await store.getSettings();
   const root = safeName(settings.downloadFolder || 'SCeLE');
-  const downloaded = await store.get('downloaded', {});
   let started = 0;
   for (const f of files) {
     const folder = [root, ...f.folder.map(safeName)].join('/');
-    const opts = { url: f.url, conflictAction: 'overwrite', saveAs: false };
+    const opts = { url: f.url, conflictAction: 'uniquify', saveAs: false };
     if (f.name) opts.filename = `${folder}/${safeName(f.name)}`;
     else pendingFolders.set(f.url, folder);
     try {
-      await chrome.downloads.download(opts);
-      downloaded[f.key] = now();
+      const id = await chrome.downloads.download(opts);
+      downloadKeys.set(id, f.key);
+      chrome.storage.session.set({ [`dl:${id}`]: f.key });
       started++;
     } catch (e) {
       console.warn('Sceleton: download failed', f, e);
     }
   }
-  await store.set('downloaded', downloaded);
   return started;
 }
+
+// A file counts as downloaded only when it arrived whole and is not SCeLE's
+// login page (which comes back as "200 OK" when the session has ended).
+chrome.downloads.onChanged.addListener(async (delta) => {
+  if (!delta.state || delta.state.current === 'in_progress') return;
+  const sessionKey = `dl:${delta.id}`;
+  const key = downloadKeys.get(delta.id) ?? (await chrome.storage.session.get(sessionKey))[sessionKey];
+  if (!key) return;
+  downloadKeys.delete(delta.id);
+  chrome.storage.session.remove(sessionKey);
+  if (delta.state.current !== 'complete') return;
+  const [item] = await chrome.downloads.search({ id: delta.id });
+  if (item && /^text\/html/i.test(item.mime || '') && !/\.html?$/i.test(item.filename)) {
+    await chrome.downloads.removeFile(delta.id).catch(() => {});
+    await chrome.downloads.erase({ id: delta.id });
+    return;
+  }
+  await serial(() => store.update('downloaded', (d) => { d[key] = now(); return d; }));
+});
 
 // ------------------------------------------------------------ messages from pages
 
