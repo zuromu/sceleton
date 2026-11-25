@@ -37,6 +37,20 @@ class NamesTest(unittest.TestCase):
         self.assertTrue(name.endswith(".pdf"))
 
 
+class TokenTest(unittest.TestCase):
+    def test_a_failed_download_does_not_print_the_token(self):
+        cli = login()
+        cli.mode, cli.cfg["token"] = "token", "SECRET-TOKEN"
+        cli.call = lambda fn, **p: [{"name": "Week 1", "modules": [{"modname": "resource", "name": "Slides", "contents": [
+            {"type": "file", "filename": "missing.pdf", "filesize": 10, "timemodified": 1,
+             "fileurl": f"{MOCK}/webservice/pluginfile.php/1/mod_resource/content/0/missing.pdf"}]}]}]
+        cli.s.get = lambda url, **kw: (_ for _ in ()).throw(scele.requests.HTTPError(f"404 for url: {url}", response=scele.requests.Response()))
+        with scele.console.capture() as out:
+            scele.cmd_sync(cli, Namespace(to=tempfile.mkdtemp(), course="PBP", dry_run=False))
+        self.assertIn("failed", out.get())
+        self.assertNotIn("SECRET-TOKEN", out.get())
+
+
 class SyncTest(unittest.TestCase):
     def setUp(self):
         self.cli = login()

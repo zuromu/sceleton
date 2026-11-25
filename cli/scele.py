@@ -56,6 +56,11 @@ MODULE_ICONS = {
 }
 
 
+def http_error_text(e):
+    """The error text from `requests` has the whole address in it, token included."""
+    return f"SCeLE answered {e.response.status_code if e.response is not None else 'with an error'}"
+
+
 class SceleError(Exception):
     """An error we can explain to the user in one line."""
 
@@ -654,7 +659,8 @@ def cmd_sync(cli, args):
                 record[key] = {"remote": [f.get("filesize") or 0, f.get("timemodified") or 0], "local": local}
             except (SceleError, requests.RequestException) as e:
                 failed += 1
-                console.print(f"[red]✗[/] {label}: {e}")
+                why = http_error_text(e) if isinstance(e, requests.HTTPError) else e
+                console.print(f"[red]✗[/] {label}: {why}")
 
     if not args.dry_run and new:
         root.mkdir(parents=True, exist_ok=True)
@@ -928,7 +934,7 @@ def main(argv=None):
         console.print("[red]Can't reach SCeLE. Check your internet, or SCeLE might be down.[/]")
         sys.exit(1)
     except requests.HTTPError as e:
-        console.print(f"[red]SCeLE returned an error: {e}[/]")
+        console.print(f"[red]SCeLE returned an error: {http_error_text(e)}[/]")
         sys.exit(1)
     except KeyboardInterrupt:
         sys.exit(130)
