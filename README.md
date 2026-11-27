@@ -17,7 +17,9 @@ Sceleton sits in your browser and does the looking for you.
 - **Shows what's due at a glance.** The number on the toolbar icon is how many things are due in the next 24 hours. Click it for the next few deadlines.
 - **Reminds you before deadlines.** Normal desktop notifications, 1 day and 3 hours before by default. You can pick 1 week, 3 days, 1 day, 6 hours, 3 hours or 1 hour.
 - **Tells you when a lecturer uploads something.** It checks your course pages every 30 minutes and notifies you when new slides, files or assignments appear.
+- **Makes "new" alerts easy to clear.** Tick one off, open it, download it, or press "Mark all seen" (with undo). Notifications have a "Mark as seen" button, and anything you never looked at stops being "new" after two weeks.
 - **Lets you pick the courses you're actually taking.** Enrolled in a course just to look at the material? Untick it, and it stops showing up in deadlines, reminders and alerts.
+- **Saves a whole course for offline use.** One click on **Save everything** keeps a copy of everything in the course: files, quizzes and exams you already finished (questions, your answers, the right answers and feedback, when the lecturer allows reviews), your assignment submissions and feedback files, pages, books, forum posts and links. It all goes into `Downloads/SCeLE/<course>/` with an `index.html` you can open without internet. Save again later and only new things are fetched. **Save all courses** does every course you take. It only reads: it never opens a page that starts or continues a quiz attempt, so it can't start an exam timer.
 - **Downloads course files into tidy folders.** One click and every file goes to `Downloads/SCeLE/<course>/<week>/`. Next time it only grabs what's new.
 - **Searches everything.** Press Ctrl K (or ⌘ K) to search courses, files, deadlines and announcements. It handles typos.
 - **Collects announcements and grades in one place**, with an inbox for SCeLE notifications and a grades page with the full breakdown per course.
@@ -31,6 +33,7 @@ The two week strip at the top of the dashboard is the "spine": one vertebra per 
 | ![Toolbar popup](docs/screenshots/popup.png) | ![Course page with downloads](docs/screenshots/course.png) |
 | ![Search](docs/screenshots/search.png) | ![Countdown on an assignment page](docs/screenshots/countdown.png) |
 | ![Choosing courses](docs/screenshots/picker.png) | ![Dark mode](docs/screenshots/home-dark.png) |
+| ![Save everything](docs/screenshots/save-everything.png) | ![A finished quiz, saved offline](docs/screenshots/offline-quiz.png) |
 
 ## Install
 
@@ -53,14 +56,16 @@ Same steps, but go to `chrome://extensions` and the Developer mode switch is at 
 
 ### Updating
 
-Download the new release, replace the old folder with the new one, then press the reload button on Sceleton's card in `edge://extensions` (or `chrome://extensions`). Your settings and data stay.
+Browsers never update extensions you loaded yourself, so Sceleton checks GitHub once a day and shows a banner when a new version is out. Click **Update** on it: it downloads the new version and shows the steps.
+
+By hand: download the new release, replace the old folder with the new one, then press the reload button on Sceleton's card in `edge://extensions` (or `chrome://extensions`). Your settings and data stay.
 
 ## Privacy
 
 - **Sceleton never sees your password.** It uses the SCeLE login you already have in your browser, the same way the SCeLE website does.
 - **Everything stays on your computer.** Deadlines, course pages and settings are saved in your browser's extension storage. There is no server, no account and no analytics.
-- **It only talks to `scele.cs.ui.ac.id`.** You can check this in `manifest.json`: that's the only site it has permission to access.
-- **It never writes.** It never submits assignments, posts in forums or changes anything on SCeLE. The only thing it marks is notifications as read, when you open them in Sceleton. Reading is not invisible, though: when the website's API is blocked, Sceleton opens course pages like you would, and "Export for Claude" with the assignment and page option on opens those activities. SCeLE can log these as visits and count them towards activity completion.
+- **It only talks to `scele.cs.ui.ac.id`,** plus one request a day to GitHub to see if there's a new version of Sceleton (nothing about you is sent, and you can switch it off in Settings, "Check for new versions"). `manifest.json` shows SCeLE is the only site it has permission to access.
+- **It never writes.** It never submits assignments, posts in forums or changes anything on SCeLE. The only thing it marks is notifications as read, when you open them in Sceleton. Reading is not invisible, though: when the website's API is blocked, Sceleton opens course pages like you would, "Export for Claude" with the details option on opens those activities, and "Save everything" opens every activity in the course (finished quiz reviews included). SCeLE can log these as visits and count them towards activity completion.
 
 ## How it works
 

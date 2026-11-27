@@ -12,6 +12,8 @@ password "pw". Extra endpoints for tests:
     POST /__dev/set-grade?course=101&value=55.00   change the first grade item of a course
     POST /__dev/set-user?id=5151&name=Name  pretend another student is logging in
     POST /__dev/logout                    end every session
+    POST /__dev/set-release?tag=v9.9.0    pretend a new Sceleton version is out
+    GET  /__dev/forbidden                 quiz attempt pages anyone opened (must stay empty)
 """
 
 import html
@@ -152,6 +154,19 @@ NOTIFS = [
     {"id": 9001, "subject": "Quiz 2 results are available", "smallmessage": "Your attempt on Quiz 2 in TBA KI has been graded.", "contexturl": f"{BASE}/mod/quiz/view.php?id=1301", "timecreated": int(START - 5 * 86400), "read": True, "component": "mod_quiz"},
 ]
 
+# Finished quizzes and an exam, for "Save everything". Added after EVENTS so
+# the ids above stay the same.
+QUIZ2 = add_module(104, 2, {"id": nid(), "name": "Quiz 2: Regular expressions", "modname": "quiz", "attempts": [
+    {"id": 7001, "grade": "6.00", "review": True}, {"id": 7002, "grade": "8.00", "review": True},
+    {"id": 7004, "grade": "-", "review": True, "unfinished": True}]})
+MIDTERM = add_module(104, 3, {"id": nid(), "name": "UTS: Midterm exam", "modname": "quiz", "attempts": [
+    {"id": 7003, "grade": "79.50", "review": False}]})
+BOOK = add_module(101, 1, {"id": nid(), "name": "Django cheat sheet", "modname": "book"})
+PAGE = add_module(101, 1, {"id": nid(), "name": "Lab rules", "modname": "page"})
+ATTEMPTS = {a["id"]: (MIDTERM if a["id"] == 7003 else QUIZ2) for a in QUIZ2["attempts"] + MIDTERM["attempts"]}
+FORBIDDEN = []  # quiz pages that start or change an attempt
+RELEASE = {"tag": "v0.0.1"}  # the "latest release" Sceleton sees; /__dev/set-release changes it
+
 GRADES = {101: "88.40", 102: "91.25", 103: "-", 104: "79.50", 105: "84.00", 106: "-", 91: "A-", 92: "B+"}
 GRADE_ITEMS = {
     101: [("Tugas Individu 1", "100.00"), ("Tugas Individu 2", "95.00"), ("Tugas Individu 3", "90.00"), ("Tugas Individu 4", "85.00"), ("Tugas Individu 5", "80.00"), ("Tugas Individu 6", "-"), ("Quiz 1", "78.00")],
@@ -236,7 +251,7 @@ header b{{color:#0f6cbf;font-size:20px}} main{{max-width:960px;margin:0 auto;pad
 .section{{list-style:none;border-bottom:1px solid #dee2e6;padding:12px 0}} .activity{{list-style:none;padding:6px 0}}
 .btn{{background:#0f6cbf;color:#fff;border:0;padding:8px 16px;border-radius:6px}} table{{border-collapse:collapse}} td,th{{border:1px solid #dee2e6;padding:6px 10px}}
 .card{{border:1px solid #dee2e6;border-radius:8px;padding:16px;margin:12px 0}} img{{border-radius:8px}}</style></head>
-<body><header><b>SCeLE</b><span>Fakultas Ilmu Komputer UI (test server)</span>{user}</header><main>{body}</main></body></html>"""
+<body><header><b>SCeLE</b><span>Fakultas Ilmu Komputer UI (test server)</span>{user}</header><main id="region-main" role="main">{body}</main></body></html>"""
 
 
 def page_course(cid):
@@ -279,7 +294,52 @@ def page_activity(mod, mid):
       <tr><th>Grading status</th><td>Not graded</td></tr><tr><th>Time remaining</th><td>See the due date above</td></tr></table>
       <p><button class="btn">Add submission</button></p></div>
       <p>Read the instructions in the attached PDF and submit a single zip file. Late submissions get a 10% penalty per day.</p>
+      <div class="fileuploadsubmission"><a href="{BASE}/pluginfile.php/{mid}/mod_assign/introattachment/0/Instructions%20{mid}.pdf?forcedownload=1">Instructions {mid}.pdf</a></div>
+      <div class="feedback"><h3>Feedback</h3><p>Nice work on the joins.</p><a href="{BASE}/pluginfile.php/{mid}/assignfeedback_file/feedback_files/1/marked-{mid}.pdf">marked-{mid}.pdf</a></div>
       <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='120'%3E%3Crect width='320' height='120' fill='%23ffd200'/%3E%3Ctext x='20' y='70' font-size='28' font-family='sans-serif'%3EUniversitas Indonesia%3C/text%3E%3C/svg%3E" alt="Banner">"""
+
+
+def page_quiz(m):
+    rows = ""
+    for i, a in enumerate(m.get("attempts", []), 1):
+        review = f'<a href="{BASE}/mod/quiz/review.php?attempt={a["id"]}&amp;cmid={m["id"]}">Review</a>' if a["review"] else "Not permitted"
+        rows += f"<tr><td>{i}</td><td>Finished<br>Submitted Monday, 3 November 2026, 10:{i:02d}</td><td>{a['grade']}</td><td>{review}</td></tr>"
+    table = f"<h3>Summary of your previous attempts</h3><table class='generaltable quizattemptsummary'><tr><th>Attempt</th><th>State</th><th>Grade / 10.00</th><th>Review</th></tr>{rows}</table>" if rows else ""
+    return f"""<h1>{html.escape(m['name'])}</h1><div class="box quizinfo"><p>Time limit: 30 mins</p><p>Grading method: Highest grade</p></div>
+      {table}<div class="quizattempt"><form method="post" action="{BASE}/mod/quiz/startattempt.php"><input type="hidden" name="cmid" value="{m['id']}">
+      <button type="submit" class="btn btn-primary">Attempt quiz now</button></form>
+      <a href="{BASE}/mod/quiz/attempt.php?attempt=1&amp;cmid={m['id']}">Continue your attempt</a></div>"""
+
+
+def page_review(aid):
+    m = ATTEMPTS.get(aid)
+    a = next((x for x in (m or {}).get("attempts", []) if x["id"] == aid), None)
+    if not a or not a["review"]:
+        return None
+    qs = [("Which strings does <code>(a|b)*abb</code> accept?", ["Only abb", "Every string over {a,b} that ends in abb", "Strings that start with abb"], 1, 1, "correct"),
+          ("How many states does the minimal DFA for <code>(a|b)*abb</code> have?", ["3", "4", "5"], 0, 1, "incorrect")]
+    body = ""
+    for n, (q, opts, picked, right, state) in enumerate(qs, 1):
+        ans = "".join(f'<div class="r{i % 2}"><input type="radio" name="q{n}" value="{i}" {"checked" if i == picked else ""} disabled><div class="d-flex"><span class="answernumber">{"abc"[i]}. </span><div class="flex-fill">{o}</div></div></div>' for i, o in enumerate(opts))
+        body += f"""<div id="question-{aid}-{n}" class="que multichoice deferredfeedback {state}">
+          <div class="info"><h3 class="no">Question <span class="qno">{n}</span></h3><div class="state">{state.title()}</div><div class="grade">Mark {"1.00" if state == "correct" else "0.00"} out of 1.00</div></div>
+          <div class="content"><div class="formulation clearfix"><div class="qtext"><p>{q}</p>{'<img src="/pluginfile.php/55/question/questiontext/dfa.png" alt="DFA diagram">' if n == 2 else ''}</div>
+          <div class="ablock"><div class="answer">{ans}</div></div></div>
+          <div class="outcome clearfix"><div class="feedback"><div class="specificfeedback">Think about which state you are in after reading the last three letters.</div>
+          <div class="rightanswer">The correct answer is: {opts[right]}</div></div></div></div></div>"""
+    summary = f"<table class='generaltable generalbox quizreviewsummary'><tr><th>State</th><td>Finished</td></tr><tr><th>Grade</th><td>{a['grade']} out of 10.00</td></tr></table>"
+    return f"<h1>{html.escape(m['name'])}</h1>{summary}<form action='{BASE}/mod/quiz/review.php'>{body}</form><a class='mod_quiz-next-nav' href='{BASE}/mod/quiz/view.php?id={m['id']}'>Finish review</a><script>alert('scele js')</script>"
+
+
+def page_forum(m):
+    links = "".join(f'<tr class="discussion"><td><a href="{BASE}/mod/forum/discuss.php?d={d}">{t}</a></td></tr>' for d, t in [(77, "Deadline Tugas Individu 7 diperpanjang"), (78, "Lab 4 clarification")])
+    return f"<h1>{html.escape(m['name'])}</h1><table class='discussion-list'>{links}</table>"
+
+
+def page_discuss(d):
+    return f"""<h1>Discussion {d}</h1><div class="forum-post-container"><div class="author-info"><a href="#">Pak Dosen</a></div>
+      <time datetime="2026-11-20T10:00:00+07:00">20 Nov</time><div class="post-content-container"><p>Post number {d}. Please read the attached file.</p>
+      <a href="{BASE}/pluginfile.php/9/mod_forum/attachment/{d}/notes-{d}.pdf">notes-{d}.pdf</a></div></div>"""
 
 
 def page_my(sesskey):
@@ -332,6 +392,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.redirect("/my/")
         if u.path == "/login/index.php":
             return self.send(layout("Log in", LOGIN_FORM.format(token=secrets.token_hex(4))))
+        if u.path in ("/__dev/release", "/__dev/forbidden") and not sesskey:
+            sesskey = "dev"
         if not sesskey:
             if u.path.startswith("/pluginfile.php"):
                 return self.send(layout("Log in", LOGIN_FORM.format(token="x")), status=200)
@@ -348,9 +410,37 @@ class Handler(BaseHTTPRequestHandler):
             cid, s, m = find_module(int(q["id"]))
             f = (m or {}).get("contents", [{}])[0]
             return self.redirect(f"/pluginfile.php/{m['id']}/mod_resource/content/0/{f.get('filename', 'file.pdf')}")
+        if u.path.startswith("/mod/quiz/") and u.path.split("/")[-1] in ("startattempt.php", "attempt.php", "processattempt.php", "summary.php"):
+            FORBIDDEN.append(self.path)
+            return self.send(layout("Quiz", "<h1>Attempt started</h1>", sesskey))
+        if u.path == "/mod/quiz/review.php":
+            m = ATTEMPTS.get(int(q.get("attempt", 0)))
+            a = next((x for x in (m or {}).get("attempts", []) if x["id"] == int(q.get("attempt", 0))), {})
+            if a.get("unfinished"):  # like Moodle: the review of an unfinished attempt sends you into the attempt
+                return self.redirect(f"/mod/quiz/attempt.php?attempt={a['id']}&cmid={m['id']}")
+            body = page_review(int(q.get("attempt", 0)))
+            return self.send(layout("Review", body or "<h1>You are not allowed to review this attempt</h1>", sesskey), status=200)
+        if u.path == "/mod/book/tool/print/index.php":
+            cid, s, m = find_module(int(q.get("id", 0)))
+            return self.send(layout("Print book", f"<h1>{html.escape(m['name'])}</h1><div class='book_chapter'><h2>1. Setup</h2><p>pip install django</p></div><div class='book_chapter'><h2>2. Views</h2><p>def index(request): ...</p></div>", sesskey))
+        if u.path == "/mod/forum/discuss.php":
+            return self.send(layout("Discussion", page_discuss(int(q.get("d", 0))), sesskey))
+        if u.path == "/mod/quiz/view.php" or u.path == "/mod/forum/view.php":
+            cid, s, m = find_module(int(q.get("id", 0)))
+            if m:
+                return self.send(layout("Activity", (page_quiz if m["modname"] == "quiz" else page_forum)(m), sesskey))
+        if u.path == "/__dev/release":  # stands in for GitHub's latest release
+            return self.send({"tag_name": RELEASE["tag"], "html_url": f"{BASE}/__dev/release-page", "body": "Test release",
+                              "assets": [{"name": "sceleton-extension.zip", "browser_download_url": f"{BASE}/__dev/release.zip"}]},
+                             "application/json", headers={"Access-Control-Allow-Origin": "*"})
+        if u.path == "/__dev/forbidden":
+            return self.send(FORBIDDEN, "application/json")
         if u.path.startswith("/mod/") and u.path.endswith("/view.php"):
             mod = u.path.split("/")[2]
             return self.send(layout("Activity", page_activity(mod, int(q.get("id", 0))), sesskey))
+        if u.path.startswith("/pluginfile.php/") and u.path.endswith(".png"):
+            svg = '<svg xmlns="http://www.w3.org/2000/svg" width="360" height="110"><g fill="none" stroke="#333" stroke-width="2"><circle cx="40" cy="55" r="22"/><circle cx="140" cy="55" r="22"/><circle cx="240" cy="55" r="22"/><circle cx="320" cy="55" r="22"/><circle cx="320" cy="55" r="17"/><path d="M62 55h56M162 55h56M262 55h36"/></g><g font-family="sans-serif" font-size="14"><text x="34" y="60">q0</text><text x="134" y="60">q1</text><text x="234" y="60">q2</text><text x="313" y="60">q3</text><text x="84" y="48">a</text><text x="184" y="48">b</text><text x="276" y="48">b</text></g></svg>'
+            return self.send(svg.encode(), "image/svg+xml")
         if u.path.startswith("/pluginfile.php/"):
             name = u.path.rsplit("/", 1)[-1]
             return self.send(f"fake contents of {name}\n".encode(), "application/octet-stream",
@@ -361,6 +451,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urlparse(self.path)
+        if u.path.startswith("/mod/quiz/"):
+            FORBIDDEN.append(self.path)
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
         raw = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
         if u.path == "/login/index.php":
@@ -401,6 +493,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send({"ok": True}, "application/json")
         if u.path == "/__dev/set-user":
             USER.update(id=int(q.get("id", 5151)), name=q.get("name", "Other Student"))
+            return self.send({"ok": True}, "application/json")
+        if u.path == "/__dev/set-release":
+            RELEASE["tag"] = q.get("tag", "v9.9.0")
             return self.send({"ok": True}, "application/json")
         if u.path == "/__dev/logout":
             SESSIONS.clear()

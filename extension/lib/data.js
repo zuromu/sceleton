@@ -120,6 +120,10 @@ export async function syncContents(courses, { maxAge = 2 * 3600, force = false }
     contents[c.id] = { sections, via, at: now() };
     added.push(...detectFresh(c, sections, known, fresh));
   }
+  for (const k of Object.keys(fresh)) {
+    fresh[k] = fresh[k].filter((m) => m.at > now() - FRESH_FOR);
+    if (!fresh[k].length) delete fresh[k];
+  }
   await chrome.storage.local.set({ contents, known, fresh });
   return { added, unavailable };
 }
@@ -127,6 +131,22 @@ export async function syncContents(courses, { maxAge = 2 * 3600, force = false }
 export async function markCourseSeen(courseId) {
   await store.update('fresh', (f) => { delete f[courseId]; return f; });
 }
+
+// Clears the "new" marker on some items (you dismissed, opened or downloaded them).
+export async function dismissFresh(moduleIds) {
+  const ids = new Set(moduleIds.map(Number));
+  if (!ids.size) return;
+  await store.update('fresh', (f) => {
+    for (const k of Object.keys(f)) {
+      f[k] = f[k].filter((m) => !ids.has(m.id));
+      if (!f[k].length) delete f[k];
+    }
+    return f;
+  });
+}
+
+// "New" items you never looked at stop being new after two weeks.
+export const FRESH_FOR = 14 * 86400;
 
 export async function syncGrades() {
   const [list, courses] = await Promise.all([scele.getGradeOverview(), store.get('courses', { list: [] })]);

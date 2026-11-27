@@ -6,6 +6,7 @@ import { urls } from '../lib/scele.js';
 import { icon, logo } from '../lib/icons.js';
 import { summary, spine, groupedList } from '../lib/views.js';
 import { esc, now, rel, DAY } from '../lib/util.js';
+import { available } from '../lib/update.js';
 
 const app = document.getElementById('app');
 const DASH = chrome.runtime.getURL('app/index.html');
@@ -48,6 +49,7 @@ function render() {
   const freshCourses = [...new Set(freshAll.map((m) => m.course))];
   const unread = db.inbox?.unread || 0;
   const firstUnread = (db.inbox?.items || []).find((n) => !n.read);
+  const update = available(db.update, settings);
 
   app.innerHTML = `${head}
     <div class="lead"><h1>${esc(s.title)}</h1><p>${esc(s.sub)}</p></div>
@@ -56,8 +58,9 @@ function render() {
       ${next.length ? groupedList(next, db.done || {}, { compact: true }) : '<div class="group-label">Nothing in the next two weeks</div><div style="height:8px"></div>'}
       <a class="more" href="#" data-act="dash" data-hash="#/deadlines">See all deadlines</a>
     </div>
-    ${freshCount || unread ? `<div class="extras">
-      ${freshCount ? `<button class="extra" data-act="dash" data-hash="#/courses">${icon('courses', 17)}<span class="grow">${freshCount} new in ${esc(freshCourses.slice(0, 2).join(', '))}${freshCourses.length > 2 ? ` and ${freshCourses.length - 2} more` : ''}</span><span class="pill fresh">New</span></button>` : ''}
+    ${freshCount || unread || update ? `<div class="extras">
+      ${update ? `<button class="extra" data-act="dash" data-hash="#/home">${icon('download', 17)}<span class="grow">Sceleton ${esc(update.latest)} is out</span><span class="pill fresh">Update</span></button>` : ''}
+      ${freshCount ? `<div class="extra-pair"><button class="extra" data-act="dash" data-hash="#/home">${icon('courses', 17)}<span class="grow">${freshCount} new in ${esc(freshCourses.slice(0, 2).join(', '))}${freshCourses.length > 2 ? ` and ${freshCourses.length - 2} more` : ''}</span><span class="pill fresh">New</span></button><button class="icon-btn" data-act="seen-all" title="Mark all as seen" aria-label="Mark all new material as seen">${icon('check', 16)}</button></div>` : ''}
       ${unread ? `<button class="extra" data-act="dash" data-hash="#/inbox">${icon('inbox', 17)}<span class="grow">${esc(firstUnread ? firstUnread.subject : 'New notifications')}</span><span class="pill">${unread}</span></button>` : ''}
     </div>` : ''}
     <footer>
@@ -88,6 +91,7 @@ document.addEventListener('click', async (e) => {
   else if (act === 'login') openTab(urls.login);
   else if (act === 'done') await data.toggleDone(Number(el.dataset.id));
   else if (act === 'day') openTab(`${DASH}#/deadlines`);
+  else if (act === 'seen-all') await store.set('fresh', {});
 });
 
 // Links to SCeLE open in a new tab instead of inside the popup.

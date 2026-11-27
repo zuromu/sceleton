@@ -13,6 +13,9 @@
 //   downloaded { [fileKey]: timestamp }
 //   vaultMarks { [path]: fingerprint }  what was last written for a notes app (see lib/vault.js)
 //   vaultCoursesDone  when the course pages were last written
+//   archived   { attempts: [quiz attempt ids saved], at: { [courseId]: when } }  (Save everything)
+//   update     { latest, zip, page, notes, at }  newest release on GitHub (lib/update.js)
+//   updatedTo  version you just updated to, until you've seen the note
 //   settings   see DEFAULT_SETTINGS
 
 export const DEFAULT_SETTINGS = {
@@ -29,6 +32,8 @@ export const DEFAULT_SETTINGS = {
   coursesChosen: false,        // has the "pick your courses" tip been dealt with?
   exportDetails: true,         // "Export for Claude" also reads assignment descriptions and pages
   vaultExport: false,          // keep markdown copies of deadlines and courses in Downloads/<folder>/vault
+  checkUpdates: true,          // once a day, ask GitHub whether a newer Sceleton is out
+  skipVersion: '',             // a new version you said "not now" to
 };
 
 export async function get(key, fallback) {

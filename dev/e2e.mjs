@@ -224,8 +224,8 @@ ok(asked.every((o) => o.conflictAction === 'uniquify'), 'downloads never replace
 await until(async () => Object.keys((await storage('downloaded')).downloaded || {}).length === asked.length, 10000);
 const { downloaded } = await storage('downloaded');
 ok(Object.keys(downloaded || {}).length === asked.length, `remembers what was downloaded (${Object.keys(downloaded || {}).length})`);
-await app.waitForSelector('text=Download all again');
-ok(true, 'button changes to "Download all again"');
+await app.waitForSelector('text=Files again');
+ok(true, 'button changes to "Files again"');
 
 // long file names keep their extension
 const longName = `${'Lecture notes '.repeat(7)}final.pdf`;
@@ -296,6 +296,108 @@ await until(async () => await app.evaluate(() => document.documentElement.datase
 ok(await app.evaluate(() => document.documentElement.dataset.theme) === 'light', 'the moon/sun button in the sidebar switches theme');
 await app.goto(`${APP}#/settings`);
 await app.selectOption('select[data-setting="theme"]', 'auto');
+
+// ------------------------------------------------------------ 5b. save everything (offline copy)
+const forbidden = async () => (await fetch(`${MOCK}/__dev/forbidden`)).json();
+await app.goto(`${APP}#/courses/104`);
+await app.waitForSelector('.course-head [data-act="save-all"]:not([disabled])', { timeout: 15000 });
+// Record what gets saved: pages the dashboard writes (with their text) and files the worker downloads.
+await app.evaluate(() => {
+  self.__saved = {};
+  const real = chrome.downloads.download.bind(chrome.downloads);
+  chrome.downloads.download = async (o) => {
+    self.__saved[o.filename] = o.url.startsWith('blob:') ? await (await fetch(o.url)).text() : '';
+    return real(o);
+  };
+});
+await sw.evaluate(() => { self.__asked = []; });
+const savedNow = async () => {
+  const pages = await app.evaluate(() => self.__saved);
+  for (const o of await sw.evaluate(() => self.__asked)) if (o.filename) pages[o.filename] ??= '';
+  return pages;
+};
+await app.click('.course-head [data-act="save-all"]');
+await app.waitForSelector('.saver:has-text("saved for offline use")', { timeout: 60000 });
+ok(true, 'Save everything finishes for one course');
+if (SHOTS && !LIMITED) await app.screenshot({ path: join(shots, 'save-everything.png') });
+const saved = await savedNow();
+const T = 'SCeLE/TBA KI/';
+const tba = Object.keys(saved).filter((f) => f.startsWith(T)).map((f) => f.slice(T.length));
+const indexHtml = saved[`${T}index.html`] || '';
+ok(!!indexHtml, 'writes index.html in the course folder');
+const localLinks = [...indexHtml.matchAll(/href="([^"]+)"/g)].map((m) => m[1]).filter((h) => !/^[a-z]+:/i.test(h));
+const missing = localLinks.filter((h) => !tba.includes(decodeURIComponent(h)));
+ok(localLinks.length >= 10 && !missing.length, `every link in index.html points at a saved file (${localLinks.length} links${missing.length ? `, missing ${missing.slice(0, 3).join(', ')}` : ''})`);
+const attemptHtml = saved[Object.keys(saved).find((f) => /Quiz 2 - Regular expressions\/Attempt 1\.html$/.test(f))] || '';
+ok(/Which strings does/.test(attemptHtml) && /The correct answer is/.test(attemptHtml), 'a finished quiz is saved with questions and right answers');
+ok(/checked/.test(attemptHtml) && /src="data:/.test(attemptHtml), 'the saved quiz keeps my answers and its pictures');
+ok(!/<script>alert/.test(attemptHtml) && !/<button/.test(attemptHtml), 'the saved copy has no SCeLE scripts or buttons');
+ok(tba.some((f) => /Quiz 2 - Regular expressions\/Attempt 2\.html$/.test(f)), 'every reviewable attempt is saved');
+ok(!tba.some((f) => /Attempt 3\.html$/.test(f)) && /could not be saved/.test(indexHtml), 'an unfinished attempt is skipped, not followed into the quiz');
+if (SHOTS && !LIMITED) {
+  const view = await ctx.newPage();
+  await view.setViewportSize({ width: 1000, height: 900 });
+  for (const [html, name] of [[attemptHtml, 'offline-quiz.png'], [indexHtml, 'offline-index.png']]) {
+    await view.setContent(html);
+    await view.screenshot({ path: join(shots, name) });
+  }
+  await view.close();
+}
+ok(tba.some((f) => /UTS - Midterm exam\/Summary\.html$/.test(f)) && /not opened the review/.test(indexHtml), 'an exam with review closed saves the grade and says why');
+ok(tba.some((f) => /\/Instructions \d+\.pdf$/.test(f)) && tba.some((f) => /\/marked-\d+\.pdf$/.test(f)), 'assignment attachments and feedback files are saved next to the page');
+ok(tba.some((f) => /Announcements\/.+\.html$/.test(f)), 'forum topics are saved');
+ok((await forbidden()).length === 0, `never opens a page that starts a quiz attempt (${JSON.stringify(await forbidden())})`);
+ok(((await storage('archived')).archived?.attempts || []).includes(7001), 'remembers which quiz attempts are saved');
+await until(async () => Object.keys((await storage('downloaded')).downloaded || {}).length >= Object.keys(saved).length - 20, 10000);
+await app.click('[data-save-close]');
+await app.waitForSelector('text=Save everything again');
+await app.evaluate(() => { self.__saved = {}; });
+await sw.evaluate(() => { self.__asked = []; });
+await app.click('.course-head [data-act="save-all"]');
+await app.waitForSelector('.saver:has-text("saved for offline use")', { timeout: 60000 });
+const again = Object.keys(await savedNow());
+ok(!again.some((f) => /Attempt \d\.html$/.test(f)) && !again.some((f) => /\.pdf$/.test(f)), `saving again skips quiz reviews and files it already has (${again.length} pages refreshed)`);
+await app.click('[data-save-close]');
+const ctxMd = await app.evaluate(async () => {
+  const exp = await import('/lib/export.js');
+  const db = await chrome.storage.local.get(null);
+  const course = db.courses.list.find((c) => c.id === 104);
+  const settings = { ...(await import('/lib/store.js')).DEFAULT_SETTINGS, ...db.settings };
+  return exp.renderContext(await exp.collectCourse(course, { db, settings, details: true }));
+});
+ok(/## Past quiz reviews/.test(ctxMd) && /\[my answer\]/.test(ctxMd), 'Export for Claude includes finished quizzes for practice');
+
+// ------------------------------------------------------------ 5c. clearing "new" items
+await fetch(`${MOCK}/__dev/add-material?course=102&name=Slides%3A%20Indexes&file=Indexes.pdf`, { method: 'POST' });
+await sendFromPage(app, { type: 'sync-course', id: 102 });
+await app.goto(`${APP}#/home`);
+await app.waitForSelector('[data-act="seen"]');
+await app.click('[data-act="seen"]');
+await until(async () => !(await storage('fresh')).fresh?.[102], 3000);
+ok(!(await storage('fresh')).fresh?.[102], 'the check button clears one new item');
+await fetch(`${MOCK}/__dev/add-material?course=102&name=Slides%3A%20Views&file=Views.pdf`, { method: 'POST' });
+await sendFromPage(app, { type: 'sync-course', id: 102 });
+await app.waitForSelector('button[data-act="clear-fresh"]');
+await app.click('button[data-act="clear-fresh"]');
+await until(async () => !Object.keys((await storage('fresh')).fresh || {}).length, 3000);
+await app.click('#toast button');
+await until(async () => (await storage('fresh')).fresh?.[102]?.length === 1, 3000);
+ok((await storage('fresh')).fresh?.[102]?.length === 1, 'Mark all seen can be undone');
+
+// ------------------------------------------------------------ 5d. new version
+await fetch(`${MOCK}/__dev/set-release?tag=v9.9.0`, { method: 'POST' });
+await sendFromPage(app, { type: 'check-update' });
+ok((await storage('update')).update?.latest === '9.9.0', 'checks GitHub for a newer release');
+await app.waitForSelector('.banner.update');
+await app.click('[data-act="update-how"]');
+ok(await app.locator('[data-up-dl]:not([disabled])').count() === 1, 'the update window has a download button');
+await app.click('[data-close-btn]');
+await app.click('[data-act="update-skip"]');
+await until(async () => (await app.locator('.banner.update').count()) === 0, 3000);
+ok((await storage('settings')).settings?.skipVersion === '9.9.0', '"Not now" hides that version');
+await app.goto(`${APP}#/settings`);
+await app.waitForSelector('.settings [data-act="check-update"]');
+ok(true, 'settings has a "Check now" button for updates');
 
 // ------------------------------------------------------------ 6. popup
 const popup = await ctx.newPage();

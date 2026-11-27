@@ -3,12 +3,13 @@
 // Every 30 minutes it checks SCeLE, updates the number on the toolbar icon,
 // sets up deadline reminders and tells you when something new shows up.
 
-import { syncCore, syncContents } from './lib/data.js';
+import { syncCore, syncContents, markCourseSeen } from './lib/data.js';
 import { setHtmlParser } from './lib/scele.js';
 import * as store from './lib/store.js';
 import { now, rel, safeName, HOUR, DAY, stripHtml } from './lib/util.js';
 import { writeVault, writeVaultFile, vaultNames, withoutDate } from './lib/vault.js';
 import { renderSemester } from './lib/export.js';
+import { checkForUpdate } from './lib/update.js';
 
 const REFRESH = 'refresh';
 const DASHBOARD = chrome.runtime.getURL('app/index.html');
@@ -121,12 +122,15 @@ function ensureAlarm() {
 chrome.runtime.onInstalled.addListener(({ reason }) => {
   ensureAlarm();
   if (reason === 'install') chrome.tabs.create({ url: DASHBOARD });
+  if (reason === 'update') store.set('updatedTo', chrome.runtime.getManifest().version);
   refresh();
+  checkForUpdate({ force: reason === 'update' });
 });
 
 chrome.runtime.onStartup.addListener(() => {
   ensureAlarm();
   refresh();
+  checkForUpdate();
 });
 
 // ------------------------------------------------------------ reminders
@@ -160,7 +164,10 @@ async function remind(eventId, hours) {
 }
 
 chrome.alarms.onAlarm.addListener((a) => {
-  if (a.name === REFRESH) refresh();
+  if (a.name === REFRESH) {
+    refresh();
+    checkForUpdate(); // at most once a day
+  }
   else if (a.name.startsWith('remind|')) {
     const [, id, h] = a.name.split('|');
     remind(id, Number(h));
@@ -169,7 +176,7 @@ chrome.alarms.onAlarm.addListener((a) => {
 
 // ------------------------------------------------------------ notifications
 
-async function notify(id, { title, message, url, urgent = false }) {
+async function notify(id, { title, message, url, urgent = false, buttons }) {
   await chrome.storage.session.set({ [`n:${id}`]: url || DASHBOARD });
   chrome.notifications.create(id, {
     type: 'basic',
@@ -178,6 +185,7 @@ async function notify(id, { title, message, url, urgent = false }) {
     message: message || '',
     priority: urgent ? 2 : 0,
     requireInteraction: urgent,
+    ...(buttons ? { buttons } : {}),
   });
 }
 
@@ -192,9 +200,24 @@ function notifyMaterials(added) {
         ? `${items[0].name} (${items[0].section})`
         : items.slice(0, 3).map((m) => m.name).join(', ') + (items.length > 3 ? ', ...' : ''),
       url: `${DASHBOARD}#/courses/${courseId}`,
+      buttons: [{ title: 'Open course' }, { title: 'Mark as seen' }],
     });
   }
 }
+
+chrome.notifications.onButtonClicked.addListener(async (id, button) => {
+  const [kind, courseId] = id.split('|');
+  if (kind === 'fresh' && button === 1) {
+    await markCourseSeen(Number(courseId));
+    chrome.notifications.clear(id);
+    chrome.storage.session.remove(`n:${id}`);
+    return;
+  }
+  const key = `n:${id}`;
+  chrome.tabs.create({ url: (await chrome.storage.session.get(key))[key] || DASHBOARD });
+  chrome.notifications.clear(id);
+  chrome.storage.session.remove(key);
+});
 
 chrome.notifications.onClicked.addListener(async (id) => {
   const key = `n:${id}`;
@@ -342,6 +365,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
       .then((how) => reply({ ok: true, how: how || 'unchanged' }))
       .catch((e) => reply({ ok: false, error: e.message }));
     return true;
+  }
+  if (msg.type === 'check-update') {
+    checkForUpdate({ force: true }).then(reply);
+    return true;
+  }
+  if (msg.type === 'reload-extension') {
+    chrome.runtime.reload();
+    return;
   }
   if (msg.type === 'open-dashboard') {
     chrome.tabs.create({ url: `${DASHBOARD}${msg.hash || ''}` });
