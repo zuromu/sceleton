@@ -157,12 +157,13 @@ NOTIFS = [
 # Finished quizzes and an exam, for "Save everything". Added after EVENTS so
 # the ids above stay the same.
 QUIZ2 = add_module(104, 2, {"id": nid(), "name": "Quiz 2: Regular expressions", "modname": "quiz", "attempts": [
-    {"id": 7001, "grade": "6.00", "review": True}, {"id": 7002, "grade": "8.00", "review": True}]})
+    {"id": 7001, "grade": "6.00", "review": True}, {"id": 7002, "grade": "8.00", "review": True},
+    {"id": 7004, "grade": "-", "review": True, "unfinished": True}]})
 MIDTERM = add_module(104, 3, {"id": nid(), "name": "UTS: Midterm exam", "modname": "quiz", "attempts": [
     {"id": 7003, "grade": "79.50", "review": False}]})
 BOOK = add_module(101, 1, {"id": nid(), "name": "Django cheat sheet", "modname": "book"})
 PAGE = add_module(101, 1, {"id": nid(), "name": "Lab rules", "modname": "page"})
-ATTEMPTS = {a["id"]: (QUIZ2 if a["id"] < 7003 else MIDTERM) for a in QUIZ2["attempts"] + MIDTERM["attempts"]}
+ATTEMPTS = {a["id"]: (MIDTERM if a["id"] == 7003 else QUIZ2) for a in QUIZ2["attempts"] + MIDTERM["attempts"]}
 FORBIDDEN = []  # quiz pages that start or change an attempt
 RELEASE = {"tag": "v0.0.1"}  # the "latest release" Sceleton sees; /__dev/set-release changes it
 
@@ -413,6 +414,10 @@ class Handler(BaseHTTPRequestHandler):
             FORBIDDEN.append(self.path)
             return self.send(layout("Quiz", "<h1>Attempt started</h1>", sesskey))
         if u.path == "/mod/quiz/review.php":
+            m = ATTEMPTS.get(int(q.get("attempt", 0)))
+            a = next((x for x in (m or {}).get("attempts", []) if x["id"] == int(q.get("attempt", 0))), {})
+            if a.get("unfinished"):  # like Moodle: the review of an unfinished attempt sends you into the attempt
+                return self.redirect(f"/mod/quiz/attempt.php?attempt={a['id']}&cmid={m['id']}")
             body = page_review(int(q.get("attempt", 0)))
             return self.send(layout("Review", body or "<h1>You are not allowed to review this attempt</h1>", sesskey), status=200)
         if u.path == "/mod/book/tool/print/index.php":

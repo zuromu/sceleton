@@ -333,6 +333,7 @@ ok(/Which strings does/.test(attemptHtml) && /The correct answer is/.test(attemp
 ok(/checked/.test(attemptHtml) && /src="data:/.test(attemptHtml), 'the saved quiz keeps my answers and its pictures');
 ok(!/<script>alert/.test(attemptHtml) && !/<button/.test(attemptHtml), 'the saved copy has no SCeLE scripts or buttons');
 ok(tba.some((f) => /Quiz 2 - Regular expressions\/Attempt 2\.html$/.test(f)), 'every reviewable attempt is saved');
+ok(!tba.some((f) => /Attempt 3\.html$/.test(f)) && /could not be saved/.test(indexHtml), 'an unfinished attempt is skipped, not followed into the quiz');
 if (SHOTS && !LIMITED) {
   const view = await ctx.newPage();
   await view.setViewportSize({ width: 1000, height: 900 });

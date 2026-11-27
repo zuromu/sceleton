@@ -28,7 +28,12 @@ const local = (u) => String(u).replace(SCELE_URL, '');
 
 async function getHtml(url) {
   if (isForbidden(url)) throw new Error(`refused to open ${url}`);
-  const r = await fetch(SCELE_URL + local(url), { credentials: 'include' });
+  // Quiz pages are never followed through a redirect: Moodle sends the review
+  // page of an attempt that isn't finished on to the attempt itself.
+  const quiz = /\/mod\/quiz\//.test(url);
+  const r = await fetch(SCELE_URL + local(url), { credentials: 'include', redirect: quiz ? 'manual' : 'follow' });
+  if (r.type === 'opaqueredirect' || (r.status >= 300 && r.status < 400)) throw new Error('SCeLE sent this quiz page somewhere else, so it was skipped');
+  if (isForbidden(r.url)) throw new Error(`refused to open ${r.url}`);
   if (/\/login\/index\.php/.test(r.url)) throw new NotLoggedIn();
   if (!r.ok) throw new Error(`SCeLE returned ${r.status}`);
   return new DOMParser().parseFromString(await r.text(), 'text/html');
@@ -102,7 +107,7 @@ function pageShell({ title, course, source, body, at = now() }) {
 export async function snapshot(doc, { title, course, source, dir, pick = null }) {
   const main = (pick && doc.querySelector(pick)) || doc.querySelector('#region-main [role="main"], [role="main"], #region-main, main') || doc.body;
   const root = main.cloneNode(true);
-  root.querySelectorAll('script, style, noscript, iframe, link, .accesshide, .sr-only, .visually-hidden, .skip-links, [data-region="drawer"], .modal, .action-menu, .editing_move, input[type="hidden"], input[type="submit"], button')
+  root.querySelectorAll('script, style, noscript, iframe, link, .questionflag, .questionflagsavebutton, .accesshide, .sr-only, .visually-hidden, .skip-links, [data-region="drawer"], .modal, .action-menu, .editing_move, input[type="hidden"], input[type="submit"], button')
     .forEach((n) => n.remove());
   root.querySelectorAll('form').forEach((f) => { const d = doc.createElement('div'); d.append(...f.childNodes); f.replaceWith(d); });
   root.querySelectorAll('input, select, textarea').forEach((n) => n.setAttribute('disabled', ''));
@@ -279,16 +284,26 @@ export async function archiveCourse(course, sections, { saveText, saveUrl, files
         await saveSnap(view, { title: m.name, path: p, source: m.url });
         entry.links.push({ label: 'Summary and grades', path: p });
         const attempts = quizAttempts(view);
+        let failed = 0;
         for (const a of attempts) {
           const ap = `${folder}/${name}/${a.label}.html`;
+          if (!savedAttempts.has(a.id)) {
+            try {
+              const doc = await getHtml(a.url);
+              await saveSnap(doc, { title: `${m.name}, ${a.label}`, path: ap, source: a.url });
+              newAttempts.push(a.id);
+            } catch (e) {
+              if (e instanceof NotLoggedIn) throw e;
+              failed++;
+              skipped.push({ name: `${m.name}, ${a.label}`, why: e.message });
+              continue;
+            }
+          }
           entry.links.push({ label: `${a.label} (questions and answers)`, path: ap });
-          if (savedAttempts.has(a.id)) continue;
-          const doc = await getHtml(a.url);
-          await saveSnap(doc, { title: `${m.name}, ${a.label}`, path: ap, source: a.url });
-          newAttempts.push(a.id);
         }
         const finishedRows = view.querySelectorAll('.quizattemptsummary tr').length - 1;
         if (!attempts.length) entry.note = finishedRows > 0 ? 'The lecturer has not opened the review, so only your grade is saved.' : 'No finished attempts yet.';
+        else if (failed) entry.note = 'Some attempts could not be saved (maybe not finished yet).';
         else if (finishedRows > attempts.length) entry.note = 'Some attempts are not open for review yet.';
       } else if (m.modname === 'forum') {
         const view = await getHtml(m.url);

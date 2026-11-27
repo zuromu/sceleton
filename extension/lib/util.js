@@ -33,6 +33,8 @@ export function stripHtml(s) {
 export function htmlToText(html) {
   return stripHtml(String(html ?? '')
     .replace(/<(script|style)[\s\S]*?<\/\1>/gi, '')
+    .replace(/<sup[^>]*>([\s\S]*?)<\/sup>/gi, '^$1') // M<sup>3</sup> is M^3, not M3
+    .replace(/<sub[^>]*>([\s\S]*?)<\/sub>/gi, '_$1')
     .replace(/<li[^>]*>/gi, '\n- ')
     .replace(/<\/t[dh]>/gi, ' | ')
     .replace(/<\/tr>/gi, '\n')
