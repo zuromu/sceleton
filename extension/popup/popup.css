@@ -47,6 +47,8 @@ a.title:hover { text-decoration: underline; }
 .extra:hover { border-color: var(--ink-3); }
 .extra .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .extra .ic { color: var(--ink-2); }
+.extra-pair { display: flex; gap: 6px; align-items: stretch; }
+.extra-pair .icon-btn { flex: none; width: 40px; height: auto; border: 1px solid var(--line); border-radius: var(--r-m); background: var(--surface); }
 
 footer { display: flex; gap: 8px; padding: 14px 12px 14px; }
 footer .btn { flex: 1; justify-content: center; }

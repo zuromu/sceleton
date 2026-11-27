@@ -11,6 +11,8 @@ import * as data from '../lib/data.js';
 import * as scele from '../lib/scele.js';
 import * as exp from '../lib/export.js';
 import { courseFiles } from '../lib/export.js';
+import * as archive from '../lib/archive.js';
+import * as updates from '../lib/update.js';
 import { coursePath } from '../lib/vault.js';
 import { icon, logo } from '../lib/icons.js';
 import { summary, spine, eventRow, groupedList, hue } from '../lib/views.js';
@@ -32,6 +34,7 @@ const ui = {
   courseLoading: new Set(),
   courseError: {},
   freshShown: {},
+  freshAll: false,
   readLocally: new Set(), // notifications opened here, in case a sync races us
   scrollTo: null,
 };
@@ -110,6 +113,45 @@ function errorBanner() {
   return `<div class="banner">${icon('bell', 18)}<span class="grow">Couldn't reach SCeLE just now (${esc(a.error || 'unknown error')}). You're seeing what was saved ${esc(rel(db.events?.at || a.errorAt))}.</span><button class="btn small" data-act="sync">Try again</button></div>`;
 }
 
+// A newer Sceleton is on GitHub, or you just updated.
+function updateBanner() {
+  const version = chrome.runtime.getManifest().version;
+  if (db.updatedTo === version) {
+    return `<div class="banner update">${icon('check', 18)}<span class="grow">Sceleton is up to date (${esc(version)}). New: <b>Save everything</b> on any course page keeps an offline copy of the whole course, quizzes and exams you finished included.</span><button class="btn small ghost" data-act="updated-ok">Got it</button></div>`;
+  }
+  const u = updates.available(db.update, settings, version);
+  if (!u) return '';
+  return `<div class="banner update">${icon('download', 18)}<span class="grow">Sceleton ${esc(u.latest)} is out. You have ${esc(version)}.</span><button class="btn small primary" data-act="update-how">Update</button><button class="btn small ghost" data-act="update-skip">Not now</button></div>`;
+}
+
+function openUpdate() {
+  const u = db.update || {};
+  const overlay = $('#overlay');
+  const where = isEdge ? 'edge://extensions' : 'chrome://extensions';
+  overlay.innerHTML = `<div class="palette-backdrop" data-close><div class="palette picker exporter" role="dialog" aria-modal="true" aria-labelledby="up-title">
+    <div class="picker-head"><h2 id="up-title">Update to Sceleton ${esc(u.latest || '')}</h2>
+      <p>Browsers don't update extensions you loaded yourself, so this takes three steps. Your settings, deadlines and downloads stay.</p></div>
+    <div class="exp-done"><ol>
+      <li><button class="btn small primary" data-up-dl ${u.zip ? '' : 'disabled'}>${icon('download', 15)}Download the new version</button></li>
+      <li>Unzip it, then copy everything inside into your Sceleton folder (the one you chose with Load unpacked) and replace the old files.</li>
+      <li><button class="btn small" data-up-reload>${icon('refresh', 15)}Reload Sceleton</button> <span class="faint">or press reload on its card at ${esc(where)}.</span></li>
+    </ol></div>
+    ${u.page ? `<p class="small" style="padding:0 22px"><a href="${esc(u.page)}" target="_blank" rel="noopener">What's new in ${esc(u.latest)}</a></p>` : ''}
+    <div class="picker-foot"><span class="grow"></span><button class="btn" data-close-btn>Close</button></div></div></div>`;
+  overlay.onclick = async (e) => {
+    const t = e.target;
+    if (t.closest('[data-up-dl]')) {
+      const downloadId = await chrome.downloads.download({ url: u.zip, filename: `sceleton-${u.latest}.zip`, conflictAction: 'overwrite', saveAs: false });
+      toast('Downloading the new version.', { label: 'Show in folder', run: () => chrome.downloads.show(downloadId) });
+    } else if (t.closest('[data-up-reload]')) {
+      chrome.runtime.sendMessage({ type: 'reload-extension' }).catch(() => {});
+    } else if (t.closest('[data-close-btn]') || t.matches('[data-close]')) {
+      overlay.innerHTML = '';
+      overlay.onclick = null;
+    }
+  };
+}
+
 function emptyNote(title, text) {
   return `<div class="empty-note"><b>${esc(title)}</b>${esc(text)}</div>`;
 }
@@ -180,8 +222,9 @@ function homePage() {
       </section>
       <div class="stack">
         <section>
-          <h2>New in your courses ${fresh.length ? `<span class="faint">${fresh.length}</span>` : ''}<span class="grow"></span>${fresh.length ? '<a href="#" data-act="clear-fresh">Mark all seen</a>' : ''}</h2>
-          <div class="panel"><ul class="rows">${fresh.length ? fresh.slice(0, 6).map(freshRow).join('') : `<li>${emptyNote('Nothing new since you last looked.', ' When a lecturer adds slides or an assignment, it lands here.')}</li>`}</ul></div>
+          <h2>New in your courses ${fresh.length ? `<span class="faint">${fresh.length}</span>` : ''}<span class="grow"></span>${fresh.length ? `<button class="btn small ghost" data-act="clear-fresh">${icon('check', 15)}Mark all seen</button>` : ''}</h2>
+          <div class="panel"><ul class="rows">${fresh.length ? (ui.freshAll ? fresh : fresh.slice(0, 6)).map(freshRow).join('') : `<li>${emptyNote('Nothing new since you last looked.', ' When a lecturer adds slides or an assignment, it lands here.')}</li>`}
+            ${fresh.length > 6 ? `<li><button class="more-row" data-act="fresh-all">${ui.freshAll ? 'Show fewer' : `Show all ${fresh.length}`}</button></li>` : ''}</ul></div>
         </section>
         <section>
           <h2>Inbox ${unreadCount() ? `<span class="faint">${unreadCount()} unread</span>` : ''}<span class="grow"></span><a href="#/inbox">Open inbox</a></h2>
@@ -196,9 +239,10 @@ function freshRow(m) {
   return `<li class="row">
     ${modIcon(m.modname, m.courseId)}
     <div class="main">
-      <a class="title" href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.name)}</a>
-      <div class="sub"><a href="#/courses/${m.courseId}">${esc(m.course)}</a><span class="sep"></span>${esc(m.section)}<span class="sep"></span><span class="faint">${esc(rel(m.at))}</span></div>
+      <a class="title" href="${esc(m.url)}" target="_blank" rel="noopener" data-seen="${m.id}">${esc(m.name)}</a>
+      <div class="sub one-line"><a href="#/courses/${m.courseId}">${esc(m.course)}</a><span class="sep"></span><span class="trunc" title="${esc(m.section)}">${esc(m.section)}</span><span class="sep"></span><span class="faint">${esc(rel(m.at))}</span></div>
     </div>
+    <div class="end"><button class="icon-btn" data-act="seen" data-id="${m.id}" title="Mark as seen" aria-label="Mark ${esc(m.name)} as seen">${icon('check', 16)}</button></div>
   </li>`;
 }
 
@@ -247,7 +291,7 @@ function coursesPage() {
   const others = courses().filter((c) => isHidden(c.id));
   return `<div class="page">
     ${errorBanner()}
-    <div class="title-row"><h1 class="headline">Courses</h1>${list.length ? `<button class="btn" data-act="export-semester">${icon('export', 16)}Export semester</button>` : ''}${courses().length ? `<button class="btn" data-act="pick-courses">${icon('settings', 16)}Choose courses</button>` : ''}</div>
+    <div class="title-row"><h1 class="headline">Courses</h1>${list.length ? `<button class="btn primary" data-act="save-courses" title="An offline copy of every course you are taking">${icon('archive', 16)}Save all courses</button>` : ''}${list.length ? `<button class="btn" data-act="export-semester">${icon('export', 16)}Export semester</button>` : ''}${courses().length ? `<button class="btn" data-act="pick-courses">${icon('settings', 16)}Choose courses</button>` : ''}</div>
     ${list.length ? `<div class="course-grid">${list.map(courseCard).join('')}</div>`
       : `<div class="panel">${emptyNote(courses().length ? "You aren't tracking any courses." : 'No courses found.', courses().length ? ' Use Choose courses to pick the ones you are taking.' : ' Courses you are enrolled in this semester show up here.')}</div>`}
     ${others.length ? `<section class="section" style="margin-top:36px">
@@ -312,7 +356,8 @@ function coursePage(id) {
       <h1>${esc(c.fullname)}</h1>
       <div class="name">${esc(c.shortname)}${content ? `<span class="faint">, updated ${esc(rel(content.at))}</span>` : ''}</div>
       <div class="actions">
-        ${files.length ? `<button class="btn primary" data-act="dl-course" data-id="${id}">${icon('download', 16)}${fresh2dl ? `Download ${fresh2dl === files.length ? 'all' : 'new'} files (${fresh2dl})` : 'Download all again'}</button>` : ''}
+        <button class="btn primary" data-act="save-all" data-id="${id}" ${content ? '' : 'disabled'} title="Files, finished quizzes and exams, your submissions and feedback, pages and forums, with an offline index">${icon('archive', 16)}${db.archived?.at?.[id] ? 'Save everything again' : 'Save everything'}</button>
+        ${files.length ? `<button class="btn" data-act="dl-course" data-id="${id}">${icon('download', 16)}${fresh2dl ? `Files only (${fresh2dl} new)` : 'Files again'}</button>` : ''}
         <button class="btn" data-act="export" data-id="${id}" ${content ? '' : 'disabled'}>${icon('export', 16)}Export for Claude</button>
         <a class="btn" href="${esc(c.url)}" target="_blank" rel="noopener">${icon('external', 16)}Open in SCeLE</a>
         <button class="btn ghost${loading ? ' spinning' : ''}" data-act="reload-course" data-id="${id}">${icon('refresh', 16)}Refresh</button>
@@ -455,6 +500,13 @@ function settingsPage() {
       ${toggle('vaultExport', 'Deadlines file for a notes app', 'Keeps a markdown list of your deadlines in the download folder, under vault/deadlines.md. Handy for Obsidian.')}
     </div>
 
+    <h2>Updates</h2>
+    <div class="panel setting-group">
+      ${toggle('checkUpdates', 'Check for new versions', 'Once a day Sceleton asks GitHub if there is a newer release and tells you here. Nothing about you is sent.')}
+      <div class="setting"><div class="label"><b>Sceleton ${esc(chrome.runtime.getManifest().version)}</b><span>${updates.available(db.update, { ...settings, checkUpdates: true, skipVersion: '' }) ? `Version ${esc(db.update.latest)} is available.` : db.update?.at ? `Last checked ${esc(rel(db.update.at))}.` : 'Not checked yet.'}</span></div>
+        <button class="btn small" data-act="check-update">${icon('refresh', 15)}Check now</button></div>
+    </div>
+
     <h2>Account and data</h2>
     <div class="panel setting-group">
       <div class="setting"><div class="label"><b>${db.auth?.name ? esc(db.auth.name) : 'SCeLE account'}</b><span>${loggedOut() ? 'Not logged in.' : `Logged in through your browser. ${esc(syncedText())}.`}</span></div>
@@ -488,7 +540,7 @@ function render() {
       const pages = { home: homePage, deadlines: deadlinesPage, courses: coursesPage, inbox: inboxPage, grades: gradesPage };
       html = (pages[r.page] || homePage)();
     }
-    $('#main').innerHTML = html;
+    $('#main').innerHTML = html.replace(/^(\s*<div class="page[^"]*">)/, `$1${updateBanner()}`);
     if (ui.scrollTo) {
       document.getElementById(ui.scrollTo)?.scrollIntoView({ block: 'start' });
       ui.scrollTo = null;
@@ -588,6 +640,7 @@ function toast(msg, action) {
 
 async function download(files, label) {
   if (!files.length) return;
+  data.dismissFresh([...new Set(files.map((f) => f.mod))]).catch(() => {});
   const res = await chrome.runtime.sendMessage({ type: 'download', files });
   const n = res?.started || 0;
   const where = `Downloads/${safeName(settings.downloadFolder)}/${safeName(files[0].folder[0])}`;
@@ -609,10 +662,12 @@ function searchIndex() {
   }
   items.push({ kind: 'Action', title: 'Sync with SCeLE now', icon: 'refresh', run: () => syncNow(true) });
   items.push({ kind: 'Action', title: 'Choose which courses to track', icon: 'courses', run: openCoursePicker });
+  items.push({ kind: 'Action', title: 'Save all my courses for offline use', sub: 'Files, quizzes, assignments and pages', icon: 'archive', run: () => saveEverything(tracked().map((c) => c.id)) });
   items.push({ kind: 'Action', title: 'Add deadlines to calendar', sub: 'Downloads an .ics file', icon: 'calendar', run: exportIcs });
   items.push({ kind: 'Action', title: 'Export my semester for Claude', sub: 'What is due and your grades, as text', icon: 'export', run: () => openExport(null) });
   const here = route();
   if (here.page === 'courses' && here.id && courseById(here.id) && db.contents?.[here.id]) {
+    items.push({ kind: 'Action', title: `Save everything in ${courseById(here.id).shortname}`, sub: 'Files, quizzes, assignments and pages, for offline use', icon: 'archive', boost: 7, run: () => saveEverything([here.id]) });
     items.push({ kind: 'Action', title: `Export ${courseById(here.id).shortname} for Claude`, sub: 'Deadlines, grades, announcements and files', icon: 'export', boost: 6, run: () => openExport(here.id) });
   }
   items.push({ kind: 'Action', title: store.isDark(settings) ? 'Switch Sceleton to light mode' : 'Switch Sceleton to dark mode', icon: store.isDark(settings) ? 'sun' : 'moon', run: () => store.toggleTheme(settings) });
@@ -742,6 +797,134 @@ async function saveBlob(blob, name, folder) {
   return { path: filename, downloadId };
 }
 
+// ------------------------------------------------------------ save everything
+
+// An offline copy of whole courses: files, plus snapshots of quizzes you
+// finished, your assignment submissions and feedback, pages, books and
+// forums, with an index.html to browse it all. See lib/archive.js.
+const saving = { running: false, hidden: false };
+
+async function writeText(path, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type: `${type}; charset=utf-8` }));
+  const filename = `${safeName(settings.downloadFolder || 'SCeLE')}/${path}`;
+  const id = await chrome.downloads.download({ url, filename, conflictAction: 'overwrite', saveAs: false });
+  setTimeout(() => URL.revokeObjectURL(url), 5 * 60 * 1000);
+  return id;
+}
+
+function saveEverything(ids) {
+  const list = ids.map(courseById).filter(Boolean);
+  if (!list.length || loggedOut()) return;
+  if (saving.running) { saving.hidden = false; showSaving(); return; }
+  Object.assign(saving, { running: true, hidden: false, list, label: '', done: 0, total: 0, result: null });
+  showSaving();
+  runSave(list).catch((err) => {
+    console.warn('Sceleton: save everything failed', err);
+    saving.result = { error: err instanceof scele.NotLoggedIn ? 'You were logged out of SCeLE. Log in again and press Save everything, it carries on where it stopped.' : err.message };
+  }).finally(() => {
+    saving.running = false;
+    if (saving.hidden) {
+      const r = saving.result || {};
+      toast(r.error ? "Saving stopped." : `Saved ${r.courses} ${r.courses === 1 ? 'course' : 'courses'} for offline use.`, { label: 'Details', run: () => { saving.hidden = false; showSaving(); } });
+    } else showSaving();
+  });
+}
+
+async function runSave(list) {
+  const root = safeName(settings.downloadFolder || 'SCeLE');
+  const { archived = { attempts: [] } } = await store.getMany(['archived']);
+  const savedAttempts = new Set(archived.attempts || []);
+  const totals = { courses: 0, files: 0, attempts: 0, skipped: [], indexId: null };
+  const progress = (p) => { Object.assign(saving, p); if (!saving.hidden) showSaving(); };
+
+  for (const [ci, c] of list.entries()) {
+    progress({ label: `${c.shortname}: reading the course page`, done: ci, total: list.length, course: ci + 1 });
+    const res = await chrome.runtime.sendMessage({ type: 'sync-course', id: c.id });
+    if (!res?.ok && /logged out/i.test(res?.error || '')) throw new scele.NotLoggedIn();
+    Object.assign(db, await store.getMany(['contents', 'downloaded']));
+    const sections = db.contents?.[c.id]?.sections || [];
+    const cdir = safeName(c.shortname);
+    const files = courseFiles(c, sections).map((f) => ({ ...f, path: [...f.folder.slice(1).map(safeName), safeName(f.name)].join('/') }));
+
+    const named = files.filter((f) => f.name && !db.downloaded?.[f.key]);
+    if (named.length) {
+      await chrome.runtime.sendMessage({ type: 'download', files: named });
+      totals.files += named.length;
+    }
+    const saveUrl = async (path, url, key) => {
+      if (key && db.downloaded?.[key]) return;
+      const parts = path.split('/');
+      await chrome.runtime.sendMessage({ type: 'download', files: [{ url, name: parts.pop(), folder: [c.shortname, ...parts], key: key || url }] });
+      totals.files++;
+    };
+    const out = await archive.archiveCourse(c, sections, {
+      files,
+      savedAttempts,
+      saveUrl,
+      saveText: async (path, text, type) => {
+        const id = await writeText(`${cdir}/${path}`, text, type);
+        if (path === 'index.html') totals.indexId = id;
+      },
+      onProgress: ({ done, total }) => progress({ label: `${c.shortname}: saving quizzes, assignments and pages`, sub: { done, total } }),
+    });
+    out.attempts.forEach((a) => savedAttempts.add(a));
+    totals.attempts += out.attempts.length;
+    totals.skipped.push(...out.skipped.map((s) => ({ ...s, course: c.shortname })));
+    totals.courses++;
+    await store.set('archived', { attempts: [...savedAttempts], at: { ...(archived.at || {}), [c.id]: now() } });
+  }
+
+  if (list.length > 1) {
+    const links = list.map((c) => `<li><a href="${encodeURIComponent(safeName(c.shortname))}/index.html">${esc(c.fullname)}</a> <span>${esc(c.shortname)}</span></li>`).join('');
+    totals.indexId = await writeText('index.html', `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>My SCeLE courses</title>
+<style>body{font:16px/1.6 -apple-system,"Segoe UI",sans-serif;max-width:720px;margin:40px auto;padding:0 20px;color-scheme:light dark}li{margin:6px 0}span{opacity:.6;font-size:14px}</style></head>
+<body><h1>My SCeLE courses</h1><p>Offline copy saved ${esc(new Date().toLocaleString('en-GB'))} with Sceleton.</p><ul>${links}</ul></body></html>`, 'text/html');
+  }
+  saving.result = totals;
+}
+
+function showSaving() {
+  if (saving.hidden) return;
+  const overlay = $('#overlay');
+  const s = saving;
+  const many = s.list.length > 1;
+  const name = many ? `${s.list.length} courses` : s.list[0].shortname;
+  let inner;
+  if (s.running) {
+    const pct = many ? ((s.done + (s.sub?.total ? s.sub.done / s.sub.total : 0)) / s.total) : (s.sub?.total ? s.sub.done / s.sub.total : 0);
+    inner = `<div class="picker-head"><h2 id="exp-title">Saving ${esc(name)}</h2>
+      <p class="exp-status" aria-live="polite">${esc(s.label || 'Starting')}${s.sub?.total ? ` (${s.sub.done} of ${s.sub.total})` : ''}</p>
+      <p class="small faint">Files, quizzes and exams you finished, your submissions and feedback, pages, books and forums. It only reads, it never starts a quiz attempt. You can keep using Sceleton, just leave this tab open.</p></div>
+      <div class="exp-bar"><span style="width:${Math.max(6, Math.round(pct * 100))}%"></span></div>
+      <div class="picker-foot"><span class="grow"></span><button class="btn" data-save-hide>Hide</button></div>`;
+  } else if (s.result?.error) {
+    inner = `<div class="picker-head"><h2 id="exp-title">Saving stopped</h2><p>${esc(s.result.error)}</p></div>
+      <div class="picker-foot"><span class="grow"></span><button class="btn" data-save-again>Try again</button><button class="btn primary" data-save-close>Close</button></div>`;
+  } else {
+    const r = s.result;
+    const where = `Downloads/${safeName(settings.downloadFolder)}${many ? '' : `/${safeName(s.list[0].shortname)}`}`;
+    inner = `<div class="picker-head"><h2 id="exp-title">${esc(name)} saved for offline use</h2>
+      <p>${esc(where)}. Open index.html there to browse everything, even without internet.</p>
+      <p class="faint">${r.files} new ${r.files === 1 ? 'file' : 'files'}, ${r.attempts} new quiz ${r.attempts === 1 ? 'review' : 'reviews'}. Save again any time: only new things are downloaded.</p></div>
+      ${r.skipped.length ? `<div class="exp-done"><b>Not saved this time</b><ol>${r.skipped.slice(0, 8).map((x) => `<li>${esc(x.course)}: ${esc(x.name)}</li>`).join('')}${r.skipped.length > 8 ? `<li>and ${r.skipped.length - 8} more</li>` : ''}</ol></div>` : ''}
+      <div class="picker-foot"><span class="grow"></span>
+        ${r.indexId ? `<button class="btn" data-save-show="${r.indexId}">Show in folder</button><button class="btn" data-save-open="${r.indexId}">Open offline copy</button>` : ''}
+        <button class="btn primary" data-save-close>Done</button></div>`;
+  }
+  overlay.innerHTML = `<div class="palette-backdrop"><div class="palette picker exporter saver" role="dialog" aria-modal="true" aria-labelledby="exp-title">${inner}</div></div>`;
+  overlay.onclick = (e) => {
+    const t = e.target;
+    if (t.closest('[data-save-hide]')) { saving.hidden = true; overlay.innerHTML = ''; toast('Still saving. You will get a message when it is done.'); }
+    else if (t.closest('[data-save-close]')) { saving.hidden = true; overlay.innerHTML = ''; overlay.onclick = null; }
+    else if (t.closest('[data-save-again]')) saveEverything(s.list.map((c) => c.id));
+    else if (t.closest('[data-save-show]')) chrome.downloads.show(Number(t.closest('[data-save-show]').dataset.saveShow));
+    else if (t.closest('[data-save-open]')) {
+      const id = Number(t.closest('[data-save-open]').dataset.saveOpen);
+      try { chrome.downloads.open(id); } catch (err) { chrome.downloads.show(id); }
+    }
+  };
+}
+
 // One course (courseId) or the whole semester (null), as text or as a zip.
 function openExport(courseId = null) {
   const c = courseId ? courseById(courseId) : null;
@@ -768,7 +951,7 @@ function openExport(courseId = null) {
         ${option('md', 'page', c ? 'Download context.md' : 'Download as a .md file', 'One file you can add to a Claude Project.')}
         ${c ? option('zip', 'archive', 'Download everything (.zip)', 'context.md and every course file, plus a CLAUDE.md for Claude Code.') : ''}
       </ul>
-      ${c ? `<label class="exp-check"><input type="checkbox" data-exp-details ${settings.exportDetails ? 'checked' : ''}><span>Also read assignment descriptions and pages (a bit slower)</span></label>` : ''}
+      ${c ? `<label class="exp-check"><input type="checkbox" data-exp-details ${settings.exportDetails ? 'checked' : ''}><span>Also read assignment descriptions, pages and quizzes you finished (a bit slower)</span></label>` : ''}
       <div class="picker-foot"><span class="grow"></span><button class="btn" data-exp-close>Cancel</button></div>`);
     overlay.querySelector('.exp-opt')?.focus();
   };
@@ -900,6 +1083,16 @@ function exportIcs() {
 
 // ------------------------------------------------------------ clicks and inputs
 
+// Opening a "new" item in SCeLE means you've seen it.
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('a[data-seen]');
+  if (a) data.dismissFresh([Number(a.dataset.seen)]).catch(() => {});
+}, true);
+document.addEventListener('auxclick', (e) => {
+  const a = e.target.closest('a[data-seen]');
+  if (a) data.dismissFresh([Number(a.dataset.seen)]).catch(() => {});
+}, true);
+
 document.addEventListener('click', async (e) => {
   const el = e.target.closest('[data-act]');
   if (!el) return;
@@ -910,6 +1103,18 @@ document.addEventListener('click', async (e) => {
   else if (act === 'pick-courses') openCoursePicker();
   else if (act === 'export') openExport(id);
   else if (act === 'export-semester') openExport(null);
+  else if (act === 'save-all') saveEverything([id]);
+  else if (act === 'update-how') openUpdate();
+  else if (act === 'update-skip') await store.saveSettings({ skipVersion: db.update?.latest || '' });
+  else if (act === 'updated-ok') await store.set('updatedTo', '');
+  else if (act === 'check-update') {
+    const u = await chrome.runtime.sendMessage({ type: 'check-update' });
+    db.update = u;
+    toast(updates.available(u, { ...settings, skipVersion: '' }) ? `Sceleton ${u.latest} is out.` : `You have the newest version (${chrome.runtime.getManifest().version}).`);
+    if (settings.skipVersion) await store.saveSettings({ skipVersion: '' });
+    render();
+  }
+  else if (act === 'save-courses') saveEverything(tracked().map((c) => c.id));
   else if (act === 'theme') settings = await store.toggleTheme(settings);
   else if (act === 'dismiss-pick') await store.saveSettings({ coursesChosen: true });
   else if (act === 'track') {
@@ -932,7 +1137,15 @@ document.addEventListener('click', async (e) => {
   } else if (act === 'ics') exportIcs();
   else if (act === 'clear-fresh') {
     e.preventDefault();
+    const before = db.fresh || {};
+    const n = freshList().length;
     await store.set('fresh', {});
+    toast(`Marked ${n} ${n === 1 ? 'item' : 'items'} as seen.`, { label: 'Undo', run: () => store.set('fresh', before) });
+  } else if (act === 'seen') {
+    await data.dismissFresh([id]);
+  } else if (act === 'fresh-all') {
+    ui.freshAll = !ui.freshAll;
+    render();
   } else if (act === 'note') {
     const n = (db.inbox?.items || []).find((x) => x.id === id);
     if (!n) return;

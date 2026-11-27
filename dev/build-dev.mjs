@@ -17,7 +17,8 @@ rmSync(out, { recursive: true, force: true });
 cpSync(src, out, { recursive: true });
 
 const cfg = join(out, 'lib', 'config.js');
-writeFileSync(cfg, readFileSync(cfg, 'utf8').replace('https://scele.cs.ui.ac.id', MOCK));
+writeFileSync(cfg, readFileSync(cfg, 'utf8').replace('https://scele.cs.ui.ac.id', MOCK)
+  .replace('https://api.github.com/repos/zuromu/sceleton/releases/latest', `${MOCK}/__dev/release`));
 
 const manifestPath = join(out, 'manifest.json');
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));

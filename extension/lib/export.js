@@ -12,6 +12,7 @@
 import * as scele from './scele.js';
 import * as data from './data.js';
 import { makeZip } from './zip.js';
+import { readQuiz } from './archive.js';
 import { now, rel, safeName, fmtSize, moduleLabel, DAY } from './util.js';
 
 const stampFmt = new Intl.DateTimeFormat('en-GB', {
@@ -59,7 +60,7 @@ export async function collectCourse(course, { db, settings, details = true, onPr
     course, sections, at: now(), notes: [],
     events: (db.events?.list || []).filter((e) => e.courseId === id && !settings.hiddenTypes.includes(e.modname)),
     done: db.done || {},
-    grades: null, total: '', announcements: null, briefs: {}, pages: {}, notifications: [],
+    grades: null, total: '', announcements: null, briefs: {}, pages: {}, notifications: [], quizzes: [],
   };
 
   onProgress({ label: 'Reading your grades' });
@@ -112,6 +113,22 @@ export async function collectCourse(course, { db, settings, details = true, onPr
       }
       onProgress({ label: 'Reading assignment descriptions and pages', done: ++done, total: todo.length });
     });
+
+    // Quizzes and exams you finished, with the questions, your answers and
+    // the right answers, when the lecturer lets you review them. Good for studying.
+    const quizzes = sections.flatMap((s) => s.modules).filter((m) => m.modname === 'quiz' && m.url).slice(0, 15);
+    let qd = 0;
+    await pool(quizzes, 2, async (m) => {
+      try {
+        const attempts = await readQuiz(m.url);
+        if (attempts.length) model.quizzes.push({ id: m.id, name: m.name, attempts });
+      } catch (e) {
+        if (e instanceof scele.NotLoggedIn) throw e;
+      }
+      onProgress({ label: 'Reading your finished quizzes', done: ++qd, total: quizzes.length });
+    });
+    const order = quizzes.map((m) => m.id);
+    model.quizzes.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
   }
   return model;
 }
@@ -256,6 +273,13 @@ export function renderContext(m, { paths = null, skipped = [] } = {}) {
     L.push('## Text of course pages', '');
     for (const mod of m.sections.flatMap((s) => s.modules).filter((x) => m.pages[x.id])) {
       L.push(`### ${mod.name}`, '', m.pages[mod.id], '');
+    }
+  }
+
+  if (m.quizzes?.length) {
+    L.push('## Past quiz reviews', '', 'Questions from quizzes and exams I already finished, with my answers and the right answers where SCeLE shows them. Good for practice: quiz me on the ones I got wrong.', '');
+    for (const q of m.quizzes) {
+      for (const a of q.attempts) L.push(`### ${q.name}, ${a.label}${a.grade ? ` (grade ${a.grade})` : ''}`, '', a.text, '');
     }
   }
 
